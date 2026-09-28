@@ -174,13 +174,3 @@ Area yang sedang aktif dikerjakan:
 Lisensi
 
 MIT. Lihat LICENSE.
-
-```
-
-Kalau ini sudah oke, lanjut ke:
-
-1. `package.json`
-2. `LICENSE`
-3. `SPEC.md`
-
-Yang mana dulu?
