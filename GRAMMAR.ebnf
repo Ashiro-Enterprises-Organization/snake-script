@@ -1,0 +1,313 @@
+(* ============================================================ *)
+(* Snake Script — Formal Grammar                                *)
+(* Version: 0.1.0                                               *)
+(* Format:  ISO/IEC 14977 EBNF (extended)                       *)
+(* ============================================================ *)
+
+(* ------------------------------------------------------------ *)
+(* 1. PROGRAM                                                    *)
+(* ------------------------------------------------------------ *)
+
+program         = { statement } , EOF ;
+
+statement       = import_stmt
+                | export_stmt
+                | type_decl
+                | const_decl
+                | let_decl
+                | fn_decl
+                | if_stmt
+                | while_stmt
+                | for_stmt
+                | match_stmt
+                | try_stmt
+                | return_stmt
+                | break_stmt
+                | continue_stmt
+                | throw_stmt
+                | expression_stmt
+                ;
+
+block           = INDENT , { statement } , DEDENT ;
+
+
+(* ------------------------------------------------------------ *)
+(* 2. IMPORT & EXPORT                                            *)
+(* ------------------------------------------------------------ *)
+
+import_stmt     = "import" , import_clause , "from" , STRING , NEWLINE ;
+
+import_clause   = "*" , "as" , identifier
+                | "{" , identifier_list , "}"
+                | identifier
+                ;
+
+identifier_list = identifier , { "," , identifier } , [ "," ] ;
+
+export_stmt     = "export" , exportable ;
+
+exportable      = const_decl
+                | let_decl
+                | fn_decl
+                | type_decl
+                ;
+
+
+(* ------------------------------------------------------------ *)
+(* 3. DEKLARASI TIPE                                             *)
+(* ------------------------------------------------------------ *)
+
+type_decl       = "type" , identifier , [ type_params ] , "=" , type_expr , NEWLINE ;
+
+type_params     = "<" , identifier , { "," , identifier } , ">" ;
+
+type_expr       = union_type ;
+
+union_type      = primary_type , { "|" , primary_type } ;
+
+primary_type    = "Angka"
+                | "Teks"
+                | "Boolean"
+                | "Null"
+                | "Kosong"
+                | "Error"
+                | identifier , [ type_args ]
+                | "(" , type_expr , ")"
+                | record_type
+                | function_type
+                ;
+
+type_args       = "<" , type_expr , { "," , type_expr } , ">" ;
+
+record_type     = "{" , NEWLINE , INDENT ,
+                    { field_decl , NEWLINE } ,
+                  DEDENT , "}"
+                ;
+
+field_decl      = identifier , ":" , type_expr ;
+
+function_type   = "(" , [ type_list ] , ")" , "->" , type_expr ;
+
+type_list       = type_expr , { "," , type_expr } , [ "," ] ;
+
+
+(* ------------------------------------------------------------ *)
+(* 4. DEKLARASI VARIABEL                                         *)
+(* ------------------------------------------------------------ *)
+
+const_decl      = "const" , identifier , [ ":" , type_expr ] , [ "=" , expression ] , NEWLINE ;
+
+let_decl        = "let" , identifier , [ ":" , type_expr ] , [ "=" , expression ] , NEWLINE ;
+
+
+(* ------------------------------------------------------------ *)
+(* 5. FUNGSI                                                     *)
+(* ------------------------------------------------------------ *)
+
+fn_decl         = "fn" , identifier , [ type_params ] , "(" , [ param_list ] , ")" ,
+                  [ "->" , type_expr ] , ":" , NEWLINE , block ;
+
+param_list      = param , { "," , param } , [ "," ] ;
+
+param           = identifier , ":" , type_expr , [ "=" , expression ] ;
+
+fn_expr         = "fn" , [ type_params ] , "(" , [ param_list ] , ")" ,
+                  [ "->" , type_expr ] , "=>" , expression ;
+
+
+(* ------------------------------------------------------------ *)
+(* 6. KONTROL ALUR                                              *)
+(* ------------------------------------------------------------ *)
+
+if_stmt         = "if" , expression , ":" , NEWLINE , block ,
+                  { "elif" , expression , ":" , NEWLINE , block } ,
+                  [ "else" , ":" , NEWLINE , block ] ;
+
+while_stmt      = "while" , expression , ":" , NEWLINE , block ;
+
+for_stmt        = "for" , identifier , "in" , expression , ":" , NEWLINE , block ;
+
+match_stmt      = "match" , expression , ":" , NEWLINE ,
+                  INDENT , { case_clause } , [ else_clause ] , DEDENT ;
+
+case_clause     = "case" , pattern , [ "if" , expression ] , ":" , NEWLINE , block ;
+
+else_clause     = "else" , ":" , NEWLINE , block ;
+
+pattern         = literal
+                | identifier
+                | pattern , "|" , pattern
+                | "_"
+                ;
+
+try_stmt        = "try" , ":" , NEWLINE , block ,
+                  "catch" , identifier , ":" , NEWLINE , block ,
+                  [ "finally" , ":" , NEWLINE , block ] ;
+
+return_stmt     = "return" , [ expression ] , NEWLINE ;
+
+break_stmt      = "break" , NEWLINE ;
+
+continue_stmt   = "continue" , NEWLINE ;
+
+throw_stmt      = "throw" , expression , NEWLINE ;
+
+
+(* ------------------------------------------------------------ *)
+(* 7. EKSPRESI (Urutan Prioritas Rendah ke Tinggi)              *)
+(* ------------------------------------------------------------ *)
+
+expression      = assignment ;
+
+assignment      = logic_or , [ assign_op , assignment ] ;
+
+assign_op       = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+
+logic_or        = logic_and , { "or" , logic_and } ;
+
+logic_and       = logic_not , { "and" , logic_not } ;
+
+logic_not       = "not" , logic_not
+                | comparison
+                ;
+
+comparison      = range_expr , [ compare_op , range_expr ] ;
+
+compare_op      = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
+
+range_expr      = additive , [ ".." , additive ] ;
+
+additive        = multiplicative , { ( "+" | "-" ) , multiplicative } ;
+
+multiplicative  = power , { ( "*" | "/" | "%" ) , power } ;
+
+power           = unary , [ "**" , power ] ;   (* right-associative *)
+
+unary           = ( "-" | "not" ) , unary
+                | postfix
+                ;
+
+postfix         = primary , { postfix_op } ;
+
+postfix_op      = "." , identifier
+                | "[" , expression , "]"
+                | "(" , [ arg_list ] , ")"
+                ;
+
+primary         = literal
+                | identifier
+                | fn_expr
+                | "(" , expression , ")"
+                | list_literal
+                | map_literal
+                | interpolated_string
+                ;
+
+arg_list        = expression , { "," , expression } , [ "," ] ;
+
+literal         = NUMBER | STRING | "true" | "false" | "null" ;
+
+
+(* ------------------------------------------------------------ *)
+(* 8. LITERAL KOMPOSIT                                           *)
+(* ------------------------------------------------------------ *)
+
+list_literal    = "[" , [ arg_list ] , "]" ;
+
+map_literal     = "{" , [ map_entries ] , "}" ;
+
+map_entries     = map_entry , { "," , map_entry } , [ "," ] ;
+
+map_entry       = ( STRING | identifier ) , ":" , expression ;
+
+interpolated_string
+                = STRING_INTERP_START ,
+                  { expression , STRING_INTERP_MIDDLE } ,
+                  STRING_INTERP_END ;
+
+
+(* ------------------------------------------------------------ *)
+(* 9. EXPRESSION STATEMENT                                      *)
+(* ------------------------------------------------------------ *)
+
+expression_stmt = expression , NEWLINE ;
+
+
+(* ------------------------------------------------------------ *)
+(* 10. LEKSIKAL                                                  *)
+(* ------------------------------------------------------------ *)
+
+(* -- Identifier dan Keyword -- *)
+identifier      = LETTER , { LETTER | DIGIT | "_" } ;
+
+LETTER          = "A".."Z" | "a".."z" | "_" ;
+
+DIGIT           = "0".."9" ;
+
+(* Keyword dikenali dari identifier; lexer yang membedakan *)
+
+
+(* -- Literal Angka -- *)
+NUMBER          = int_lit | float_lit | hex_lit | bin_lit | oct_lit ;
+
+int_lit         = DIGIT , { DIGIT | "_" } ;
+
+float_lit       = int_lit , "." , int_lit , [ exponent ]
+                | int_lit , exponent
+                ;
+
+exponent        = ( "e" | "E" ) , [ "+" | "-" ] , int_lit ;
+
+hex_lit         = "0x" , hex_digit , { hex_digit | "_" } ;
+
+bin_lit         = "0b" , bin_digit , { bin_digit | "_" } ;
+
+oct_lit         = "0o" , oct_digit , { oct_digit | "_" } ;
+
+hex_digit       = DIGIT | "a".."f" | "A".."F" ;
+
+bin_digit       = "0" | "1" ;
+
+oct_digit       = "0".."7" ;
+
+
+(* -- Literal Teks -- *)
+STRING          = '"' , { string_char | escape_seq } , '"'
+                | "'" , { string_char | escape_seq } , "'"
+                ;
+
+string_char     = ? semua karakter kecuali ", ', \, newline ? ;
+
+escape_seq      = "\" , ( "n" | "t" | "r" | "\\" | '"' | "'" | "$" ) ;
+
+STRING_INTERP_START   = '"' , { string_char | escape_seq } , "${" ;
+
+STRING_INTERP_MIDDLE  = "}" , { string_char | escape_seq } , "${" ;
+
+STRING_INTERP_END     = "}" , { string_char | escape_seq } , '"' ;
+
+
+(* -- Komentar -- *)
+comment         = "#" , { ? karakter apa pun kecuali newline ? } , NEWLINE ;
+
+
+(* -- Newline dan Indentasi -- *)
+NEWLINE         = ? end of line, diabaikan di dalam ( ) [ ] { } ? ;
+
+INDENT          = ? peningkatan level indentasi (4 spasi) ? ;
+
+DEDENT          = ? penurunan level indentasi ? ;
+
+EOF             = ? end of file ? ;
+
+
+(* ============================================================ *)
+(* Catatan:                                                     *)
+(* - Grammar ini tidak menangani INDENT/DEDENT secara implisit. *)
+(*   Lexer bertanggung jawab menghasilkan token INDENT dan      *)
+(*   DEDENT berdasarkan perbandingan kolom.                     *)
+(* - Aturan "one statement per line" tidak tertulis di grammar, *)
+(*   tapi ditegakkan oleh parser.                               *)
+(* - Operator `**` right-associative, semua binary lain         *)
+(*   left-associative.                                          *)
+(* ============================================================ *)
