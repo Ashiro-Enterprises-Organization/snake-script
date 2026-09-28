@@ -14,7 +14,6 @@
 
 import type {
   Location,
-  Position,
   ProgramNode,
   StmtNode,
   DeclNode,
@@ -28,13 +27,12 @@ import type {
   ElifClauseNode,
   CaseClauseNode,
   BinaryOperator,
-  UnaryOperator,
   AssignOperator,
   ImportKind,
   PrimitiveTypeName,
 } from "./ast.ts";
 
-import { TokenStream, type Token, type TokenKind } from "./lexer.ts";
+import { Lexer, TokenStream, type Token, type TokenKind } from "./lexer.ts";
 import type { Reporter } from "./diagnostics.ts";
 import { ErrorCode, InternalError } from "./diagnostics.ts";
 
@@ -48,6 +46,19 @@ export interface ParserOptions {
   /** Mode recovery: lanjut parse setelah error. Default true. */
   readonly recoverOnError?: boolean;
 }
+
+// ============================================================
+// Primitive Type Names (untuk validasi cepat)
+// ============================================================
+
+const PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
+  "Angka",
+  "Teks",
+  "Boolean",
+  "Null",
+  "Kosong",
+  "Error",
+]);
 
 // ============================================================
 // Parser
@@ -77,10 +88,16 @@ export class Parser {
    * Entry point: parse seluruh program.
    */
   parseProgram(): ProgramNode {
-    const statements: StmtNode[] = [];
     const startTok = this.peek();
+    const statements: StmtNode[] = [];
 
     while (!this.check("EOF")) {
+      // Skip NEWLINE di top level
+      if (this.check("NEWLINE")) {
+        this.next();
+        continue;
+      }
+
       try {
         const stmt = this.parseStatement();
         if (stmt) statements.push(stmt);
@@ -158,19 +175,21 @@ export class Parser {
     let names: string[] = [];
     let alias: string | null = null;
 
-    if (this.match("STAR")) {
+    if (this.check("STAR")) {
       // import * as name from "..."
-      importKind = "namespace";
+      this.next();
       this.expect("AS");
       alias = this.expectIdentifier();
+      importKind = "namespace";
     } else if (this.check("LBRACE")) {
       // import { a, b } from "..."
+      this.next();
       importKind = "named";
-      this.next(); // {
       if (!this.check("RBRACE")) {
         do {
+          if (this.check("RBRACE")) break;
           names.push(this.expectIdentifier());
-        } while (this.match("COMMA") && !this.check("RBRACE"));
+        } while (this.match("COMMA"));
       }
       this.expect("RBRACE");
     } else {
@@ -200,15 +219,15 @@ export class Parser {
     let decl: DeclNode;
 
     if (this.check("CONST") || this.check("LET")) {
-      decl = this.parseVarDecl() as never;
+      decl = this.parseVarDeclNode();
     } else if (this.check("FN")) {
-      decl = this.parseFunctionDecl() as never;
+      decl = this.parseFunctionDeclNode();
     } else if (this.check("TYPE")) {
-      decl = this.parseTypeDecl() as never;
+      decl = this.parseTypeDeclNode();
     } else {
       this.error(
         ErrorCode.UNEXPECTED_TOKEN,
-        "hanya const, let, fn, atau type yang dapat di-export",
+        "hanya `const`, `let`, `fn`, atau `type` yang dapat di-export",
         this.peek(),
       );
       throw new ParsePanic();
@@ -217,7 +236,11 @@ export class Parser {
     return {
       kind: "ExportStmt",
       declaration: decl,
-      loc: this.locOf(startTok, { loc: decl.loc } as Token),
+      loc: {
+        start: startTok.loc.start,
+        end: decl.loc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -226,14 +249,16 @@ export class Parser {
   // ==========================================================
 
   private parseTypeDecl(): StmtNode {
+    return this.parseTypeDeclNode();
+  }
+
+  private parseTypeDeclNode(): DeclNode {
     const startTok = this.expect("TYPE");
     const name = this.expectIdentifier();
-
     const typeParams = this.parseOptionalTypeParams();
 
     this.expect("EQ");
     const value = this.parseTypeExpr();
-
     const endTok = this.expectLineEnd();
 
     return {
@@ -250,9 +275,13 @@ export class Parser {
   // ==========================================================
 
   private parseVarDecl(): StmtNode {
+    return this.parseVarDeclNode();
+  }
+
+  private parseVarDeclNode(): DeclNode {
     const startTok = this.peek();
     const mutable = startTok.kind === "LET";
-    this.next(); // const / let
+    this.next();
 
     const name = this.expectIdentifier();
 
@@ -291,11 +320,13 @@ export class Parser {
   // ==========================================================
 
   private parseFunctionDecl(): StmtNode {
+    return this.parseFunctionDeclNode();
+  }
+
+  private parseFunctionDeclNode(): DeclNode {
     const startTok = this.expect("FN");
     const name = this.expectIdentifier();
-
     const typeParams = this.parseOptionalTypeParams();
-
     const params = this.parseParamList();
 
     let returnType: TypeNode | null = null;
@@ -336,13 +367,15 @@ export class Parser {
 
     // Validasi: parameter default tidak boleh mendahului parameter wajib
     let seenDefault = false;
+    let firstDefaultName: string | null = null;
     for (const p of params) {
       if (p.defaultValue) {
         seenDefault = true;
+        if (!firstDefaultName) firstDefaultName = p.name;
       } else if (seenDefault) {
         this.error(
           ErrorCode.UNEXPECTED_TOKEN,
-          `parameter \`${p.name}\` tanpa default tidak boleh setelah parameter berdefault`,
+          `parameter \`${p.name}\` tanpa default tidak boleh setelah parameter \`${firstDefaultName}\` yang berdefault`,
           this.peek(),
         );
       }
@@ -367,7 +400,7 @@ export class Parser {
       name,
       type,
       defaultValue,
-      loc: this.locOf(startTok, this.prevToken()),
+      loc: this.locOf(startTok, this.stream.previous()),
     };
   }
 
@@ -414,7 +447,11 @@ export class Parser {
       then,
       elifs,
       else: elseBlock,
-      loc: { start: startTok.loc.start, end: endLoc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: endLoc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -432,7 +469,11 @@ export class Parser {
       kind: "WhileStmt",
       condition,
       body,
-      loc: { start: startTok.loc.start, end: body.loc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: body.loc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -453,7 +494,11 @@ export class Parser {
       variable,
       iterable,
       body,
-      loc: { start: startTok.loc.start, end: body.loc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: body.loc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -472,29 +517,34 @@ export class Parser {
     let elseBlock: BlockNode | null = null;
 
     while (!this.check("DEDENT") && !this.check("EOF")) {
+      if (this.check("NEWLINE")) {
+        this.next();
+        continue;
+      }
+
       if (this.check("CASE")) {
         cases.push(this.parseCaseClause());
-      } else if (this.check("ELSE")) {
-        const elseTok = this.next();
-        this.expect("COLON");
-        const body = this.parseBlock();
-        elseBlock = body;
-        // Setelah else, harus DEDENT
-        void elseTok;
-        break;
-      } else if (this.check("NEWLINE")) {
-        this.next();
-      } else {
-        this.error(
-          ErrorCode.UNEXPECTED_TOKEN,
-          "diharapkan `case` atau `else` di dalam match",
-          this.peek(),
-        );
-        throw new ParsePanic();
+        continue;
       }
+
+      if (this.check("ELSE")) {
+        this.next();
+        this.expect("COLON");
+        elseBlock = this.parseBlock();
+        break;
+      }
+
+      this.error(
+        ErrorCode.UNEXPECTED_TOKEN,
+        "diharapkan `case` atau `else` di dalam match",
+        this.peek(),
+      );
+      throw new ParsePanic();
     }
 
-    if (!this.check("EOF")) this.expect("DEDENT");
+    if (!this.check("EOF")) {
+      this.expect("DEDENT");
+    }
 
     const endLoc = elseBlock?.loc ??
       (cases.length > 0 ? cases[cases.length - 1]!.loc : startTok.loc);
@@ -504,7 +554,11 @@ export class Parser {
       subject,
       cases,
       else: elseBlock,
-      loc: { start: startTok.loc.start, end: endLoc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: endLoc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -525,7 +579,11 @@ export class Parser {
       pattern,
       guard,
       body,
-      loc: { start: startTok.loc.start, end: body.loc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: body.loc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -545,7 +603,7 @@ export class Parser {
       return {
         kind: "OrPattern",
         patterns,
-        loc: this.locOf(startTok, this.prevToken()),
+        loc: this.locOf(startTok, this.stream.previous()),
       };
     }
 
@@ -576,7 +634,7 @@ export class Parser {
       return { kind: "LiteralPattern", value, loc: tok.loc };
     }
 
-    if (tok.kind === "MINUS" && this.peek(1).kind === "NUMBER") {
+    if (tok.kind === "MINUS" && this.peekKind(1) === "NUMBER") {
       this.next();
       const numTok = this.expect("NUMBER");
       return {
@@ -588,7 +646,11 @@ export class Parser {
 
     if (tok.kind === "IDENTIFIER") {
       this.next();
-      return { kind: "BindingPattern", name: String(tok.value), loc: tok.loc };
+      return {
+        kind: "BindingPattern",
+        name: String(tok.value),
+        loc: tok.loc,
+      };
     }
 
     this.error(
@@ -627,7 +689,11 @@ export class Parser {
       errorName,
       catchBody,
       finallyBody,
-      loc: { start: startTok.loc.start, end: endLoc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: endLoc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -639,7 +705,11 @@ export class Parser {
     const startTok = this.expect("RETURN");
 
     let value: ExprNode | null = null;
-    if (!this.check("NEWLINE") && !this.check("EOF") && !this.check("DEDENT")) {
+    if (
+      !this.check("NEWLINE") &&
+      !this.check("EOF") &&
+      !this.check("DEDENT")
+    ) {
       value = this.parseExpression();
     }
 
@@ -655,13 +725,19 @@ export class Parser {
   private parseBreak(): StmtNode {
     const startTok = this.expect("BREAK");
     const endTok = this.expectLineEnd();
-    return { kind: "BreakStmt", loc: this.locOf(startTok, endTok) };
+    return {
+      kind: "BreakStmt",
+      loc: this.locOf(startTok, endTok),
+    };
   }
 
   private parseContinue(): StmtNode {
     const startTok = this.expect("CONTINUE");
     const endTok = this.expectLineEnd();
-    return { kind: "ContinueStmt", loc: this.locOf(startTok, endTok) };
+    return {
+      kind: "ContinueStmt",
+      loc: this.locOf(startTok, endTok),
+    };
   }
 
   private parseThrow(): StmtNode {
@@ -706,6 +782,7 @@ export class Parser {
         this.next();
         continue;
       }
+
       try {
         const stmt = this.parseStatement();
         if (stmt) statements.push(stmt);
@@ -723,7 +800,11 @@ export class Parser {
     return {
       kind: "Block",
       statements,
-      loc: { start: startTok.loc.start, end: endTok.loc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: endTok.loc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -751,8 +832,11 @@ export class Parser {
       const operator = this.assignOperatorOf(opTok.kind);
       const value = this.parseAssignment();
 
-      // Validasi target
-      if (left.kind !== "Identifier" && left.kind !== "MemberExpr" && left.kind !== "IndexExpr") {
+      if (
+        left.kind !== "Identifier" &&
+        left.kind !== "MemberExpr" &&
+        left.kind !== "IndexExpr"
+      ) {
         this.error(
           ErrorCode.UNEXPECTED_TOKEN,
           "sisi kiri assignment harus identifier, member, atau index",
@@ -765,7 +849,11 @@ export class Parser {
         operator,
         target: left,
         value,
-        loc: { start: startTok.loc.start, end: value.loc.end, file: this.file },
+        loc: {
+          start: startTok.loc.start,
+          end: value.loc.end,
+          file: this.file,
+        },
       };
     }
 
@@ -776,16 +864,19 @@ export class Parser {
     let left = this.parseLogicAnd();
 
     while (this.check("OR")) {
-      const opTok = this.next();
+      this.next();
       const right = this.parseLogicAnd();
       left = {
         kind: "BinaryExpr",
         operator: "or",
         left,
         right,
-        loc: { start: left.loc.start, end: right.loc.end, file: this.file },
+        loc: {
+          start: left.loc.start,
+          end: right.loc.end,
+          file: this.file,
+        },
       };
-      void opTok;
     }
 
     return left;
@@ -795,16 +886,19 @@ export class Parser {
     let left = this.parseLogicNot();
 
     while (this.check("AND")) {
-      const opTok = this.next();
+      this.next();
       const right = this.parseLogicNot();
       left = {
         kind: "BinaryExpr",
         operator: "and",
         left,
         right,
-        loc: { start: left.loc.start, end: right.loc.end, file: this.file },
+        loc: {
+          start: left.loc.start,
+          end: right.loc.end,
+          file: this.file,
+        },
       };
-      void opTok;
     }
 
     return left;
@@ -818,7 +912,11 @@ export class Parser {
         kind: "UnaryExpr",
         operator: "not",
         operand,
-        loc: { start: startTok.loc.start, end: operand.loc.end, file: this.file },
+        loc: {
+          start: startTok.loc.start,
+          end: operand.loc.end,
+          file: this.file,
+        },
       };
     }
     return this.parseComparison();
@@ -842,7 +940,11 @@ export class Parser {
         operator: this.binaryOperatorOf(opTok.kind),
         left,
         right,
-        loc: { start: left.loc.start, end: right.loc.end, file: this.file },
+        loc: {
+          start: left.loc.start,
+          end: right.loc.end,
+          file: this.file,
+        },
       };
     }
 
@@ -855,7 +957,7 @@ export class Parser {
     if (this.check("DOT_DOT")) {
       this.next();
       const right = this.parseAdditive();
-      // Range direpresentasikan sebagai pemanggilan fungsi `rentang`
+      // Range direpresentasikan sebagai pemanggilan `rentang(a, b)`
       return {
         kind: "CallExpr",
         callee: {
@@ -864,7 +966,11 @@ export class Parser {
           loc: left.loc,
         },
         args: [left, right],
-        loc: { start: left.loc.start, end: right.loc.end, file: this.file },
+        loc: {
+          start: left.loc.start,
+          end: right.loc.end,
+          file: this.file,
+        },
       };
     }
 
@@ -882,7 +988,11 @@ export class Parser {
         operator: opTok.kind === "PLUS" ? "+" : "-",
         left,
         right,
-        loc: { start: left.loc.start, end: right.loc.end, file: this.file },
+        loc: {
+          start: left.loc.start,
+          end: right.loc.end,
+          file: this.file,
+        },
       };
     }
 
@@ -907,7 +1017,11 @@ export class Parser {
         operator: op,
         left,
         right,
-        loc: { start: left.loc.start, end: right.loc.end, file: this.file },
+        loc: {
+          start: left.loc.start,
+          end: right.loc.end,
+          file: this.file,
+        },
       };
     }
 
@@ -925,7 +1039,11 @@ export class Parser {
         operator: "**",
         left,
         right,
-        loc: { start: left.loc.start, end: right.loc.end, file: this.file },
+        loc: {
+          start: left.loc.start,
+          end: right.loc.end,
+          file: this.file,
+        },
       };
     }
 
@@ -940,7 +1058,11 @@ export class Parser {
         kind: "UnaryExpr",
         operator: "-",
         operand,
-        loc: { start: startTok.loc.start, end: operand.loc.end, file: this.file },
+        loc: {
+          start: startTok.loc.start,
+          end: operand.loc.end,
+          file: this.file,
+        },
       };
     }
 
@@ -952,15 +1074,18 @@ export class Parser {
 
     while (true) {
       if (this.check("DOT")) {
-        const dotTok = this.next();
+        this.next();
         const name = this.expectIdentifier();
         expr = {
           kind: "MemberExpr",
           object: expr,
           property: name,
-          loc: { start: expr.loc.start, end: this.prevToken().loc.end, file: this.file },
+          loc: {
+            start: expr.loc.start,
+            end: this.stream.previous().loc.end,
+            file: this.file,
+          },
         };
-        void dotTok;
       } else if (this.check("LBRACKET")) {
         this.next();
         const index = this.parseExpression();
@@ -969,7 +1094,11 @@ export class Parser {
           kind: "IndexExpr",
           object: expr,
           index,
-          loc: { start: expr.loc.start, end: close.loc.end, file: this.file },
+          loc: {
+            start: expr.loc.start,
+            end: close.loc.end,
+            file: this.file,
+          },
         };
       } else if (this.check("LPAREN")) {
         this.next();
@@ -979,7 +1108,11 @@ export class Parser {
           kind: "CallExpr",
           callee: expr,
           args,
-          loc: { start: expr.loc.start, end: close.loc.end, file: this.file },
+          loc: {
+            start: expr.loc.start,
+            end: close.loc.end,
+            file: this.file,
+          },
         };
       } else {
         break;
@@ -1058,10 +1191,8 @@ export class Parser {
 
   private parseLiteral(): ExprNode {
     const tok = this.next();
-    let literalKind: "number" | "string";
-
-    if (tok.kind === "NUMBER") literalKind = "number";
-    else literalKind = "string";
+    const literalKind: "number" | "string" =
+      tok.kind === "NUMBER" ? "number" : "string";
 
     return {
       kind: "Literal",
@@ -1089,15 +1220,13 @@ export class Parser {
 
     if (startTok.value) parts.push(String(startTok.value));
 
-    // Baca ekspresi di dalam interpolation
-    let expr = this.parseExpression();
-    parts.push(expr);
+    // Ekspresi pertama di dalam `${...}`
+    parts.push(this.parseExpression());
 
     while (this.check("STRING_INTERP_MIDDLE")) {
       const midTok = this.next();
       if (midTok.value) parts.push(String(midTok.value));
-      expr = this.parseExpression();
-      parts.push(expr);
+      parts.push(this.parseExpression());
     }
 
     const endTok = this.expect("STRING_INTERP_END");
@@ -1129,7 +1258,11 @@ export class Parser {
       params,
       returnType,
       body,
-      loc: { start: startTok.loc.start, end: body.loc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: body.loc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -1208,7 +1341,7 @@ export class Parser {
       kind: "MapEntry",
       key,
       value,
-      loc: this.locOf(startTok, this.prevToken()),
+      loc: this.locOf(startTok, this.stream.previous()),
     };
   }
 
@@ -1232,7 +1365,7 @@ export class Parser {
       return {
         kind: "UnionType",
         members,
-        loc: this.locOf(startTok, this.prevToken()),
+        loc: this.locOf(startTok, this.stream.previous()),
       };
     }
 
@@ -1252,26 +1385,20 @@ export class Parser {
       return this.parseFunctionType();
     }
 
-    // Identifier (bisa jadi nama tipe primitif atau user-defined)
+    // Identifier: tipe primitif atau user-defined
     if (tok.kind === "IDENTIFIER") {
       this.next();
       const name = String(tok.value);
 
-      // Cek apakah ini tipe primitif
-      const primitives: PrimitiveTypeName[] = [
-        "Angka", "Teks", "Boolean", "Null", "Kosong", "Error",
-      ];
-
       let base: TypeNode;
 
-      if (primitives.includes(name as PrimitiveTypeName)) {
+      if (PRIMITIVE_TYPES.has(name)) {
         base = {
           kind: "PrimitiveType",
           name: name as PrimitiveTypeName,
           loc: tok.loc,
         };
       } else {
-        // Named type dengan optional type args
         const typeArgs: TypeNode[] = [];
         if (this.check("LT")) {
           this.next();
@@ -1285,17 +1412,25 @@ export class Parser {
           kind: "NamedType",
           name,
           typeArgs,
-          loc: { start: tok.loc.start, end: this.prevToken().loc.end, file: this.file },
+          loc: {
+            start: tok.loc.start,
+            end: this.stream.previous().loc.end,
+            file: this.file,
+          },
         };
       }
 
-      // Cek nullable suffix `?`
+      // Nullable suffix `?`
       if (this.check("QUESTION")) {
         const qTok = this.next();
         return {
           kind: "NullableType",
           inner: base,
-          loc: { start: tok.loc.start, end: qTok.loc.end, file: this.file },
+          loc: {
+            start: tok.loc.start,
+            end: qTok.loc.end,
+            file: this.file,
+          },
         };
       }
 
@@ -1314,10 +1449,9 @@ export class Parser {
     const startTok = this.expect("LBRACE");
     const fields: FieldDeclNode[] = [];
 
-    // Record type bisa multi-line atau single-line
     const multiLine = this.check("NEWLINE");
     if (multiLine) {
-      this.next(); // NEWLINE
+      this.next();
       this.expect("INDENT");
     }
 
@@ -1336,10 +1470,9 @@ export class Parser {
         kind: "FieldDecl",
         name,
         type,
-        loc: this.locOf(fieldStart, this.prevToken()),
+        loc: this.locOf(fieldStart, this.stream.previous()),
       });
 
-      // Konsumsi newline opsional
       if (multiLine && this.check("NEWLINE")) this.next();
     }
 
@@ -1372,7 +1505,11 @@ export class Parser {
       kind: "FunctionType",
       params,
       returns,
-      loc: { start: startTok.loc.start, end: returns.loc.end, file: this.file },
+      loc: {
+        start: startTok.loc.start,
+        end: returns.loc.end,
+        file: this.file,
+      },
     };
   }
 
@@ -1400,15 +1537,12 @@ export class Parser {
     return this.stream.peek(offset);
   }
 
-  private next(): Token {
-    return this.stream.next();
+  private peekKind(offset = 0): TokenKind {
+    return this.stream.peekKind(offset);
   }
 
-  private prevToken(): Token {
-    // TokenStream tidak expose prev; kita perlu track manual
-    // Untuk sekarang, kita return peek karena kita sering panggil
-    // setelah advance. Bisa diperbaiki nanti.
-    return this.stream.peek();
+  private next(): Token {
+    return this.stream.next();
   }
 
   private check(kind: TokenKind): boolean {
@@ -1426,7 +1560,7 @@ export class Parser {
     const tok = this.peek();
     this.error(
       ErrorCode.UNEXPECTED_TOKEN,
-      `diharapkan ${kind}, ditemukan ${tok.kind}`,
+      `diharapkan \`${kind}\`, ditemukan \`${tok.kind}\``,
       tok,
     );
     throw new ParsePanic();
@@ -1438,8 +1572,7 @@ export class Parser {
   }
 
   /**
-   * Konsumsi NEWLINE, atau EOF, atau DEDENT sebagai terminator.
-   * Beberapa statement tidak butuh NEWLINE eksplisit di akhir (mis. di EOF).
+   * Konsumsi NEWLINE, atau EOF, atau DEDENT sebagai terminator statement.
    */
   private expectLineEnd(): Token {
     if (this.check("NEWLINE")) {
@@ -1451,7 +1584,7 @@ export class Parser {
     const tok = this.peek();
     this.error(
       ErrorCode.UNEXPECTED_TOKEN,
-      `diharapkan akhir baris, ditemukan ${tok.kind}`,
+      `diharapkan akhir baris, ditemukan \`${tok.kind}\``,
       tok,
     );
     throw new ParsePanic();
@@ -1581,8 +1714,8 @@ export class Parser {
 
 /**
  * Exception internal untuk sinyal ke parseProgram / parseBlock
- * bahwa kita perlu melakukan recovery. Bukan error yang dilaporkan
- * ke user — error sudah dilaporkan via reporter sebelum throw.
+ * bahwa kita perlu recovery. Bukan error yang dilaporkan ke user
+ * — error sudah dilaporkan via reporter sebelum throw.
  */
 class ParsePanic extends Error {
   constructor() {
@@ -1603,9 +1736,6 @@ export function parse(
   file: string,
   reporter: Reporter,
 ): ProgramNode {
-  // Import lex di sini untuk hindari circular dependency
-  // (lexer tidak import parser, tapi parser import lexer)
-  const { Lexer } = require("./lexer.ts") as typeof import("./lexer.ts");
   const lexer = new Lexer(source, { file, reporter });
   const stream = lexer.tokenize();
   const parser = new Parser(stream, { file, reporter });
