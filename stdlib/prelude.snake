@@ -1,0 +1,577 @@
+# ============================================================
+# Snake Script — Prelude
+# ============================================================
+#
+# Pustaka standar yang otomatis tersedia di setiap program.
+# Ditulis dalam Snake Script sendiri — dogfooding.
+#
+# Versi: 0.1.0
+# Status: Referensi — belum otomatis di-load oleh interpreter.
+#
+# Konvensi penamaan:
+#   - Nama utama dalam Bahasa Indonesia
+#   - Alias Bahasa Inggris tersedia untuk fungsi umum
+#
+# ============================================================
+
+
+# ============================================================
+# 1. Matematika
+# ============================================================
+
+## Nilai absolut. `abs(-5)` → `5`
+fn mutlak(x: Angka) -> Angka:
+    if x < 0:
+        return -x
+    return x
+
+## Alias Bahasa Inggris.
+const abs = mutlak
+
+
+## Nilai maksimum dari dua angka.
+fn maks(a: Angka, b: Angka) -> Angka:
+    if a > b:
+        return a
+    return b
+
+const max = maks
+
+
+## Nilai minimum dari dua angka.
+fn min(a: Angka, b: Angka) -> Angka:
+    if a < b:
+        return a
+    return b
+
+const min = min
+
+
+## Bulatkan ke bawah.
+fn lantai(x: Angka) -> Angka:
+    if x >= 0:
+        return Angka(Teks(x).split(".")[0])
+    const negatif = -x
+    const floor = Angka(Teks(negatif).split(".")[0])
+    if floor == negatif:
+        return -floor
+    return -(floor + 1)
+
+const floor = lantai
+
+
+## Bulatkan ke atas.
+fn langit(x: Angka) -> Angka:
+    if x >= 0:
+        const trunc = Angka(Teks(x).split(".")[0])
+        if trunc == x:
+            return trunc
+        return trunc + 1
+    return -lantai(-x)
+
+const ceil = langit
+
+
+## Kuadrat. Lebih cepat dari `**` untuk ekspresi sederhana.
+fn kuadrat(x: Angka) -> Angka:
+    return x * x
+
+const square = kuadrat
+
+
+## Pangkat bilangan bulat non-negatif.
+fn pangkat(dasar: Angka, exp: Angka) -> Angka:
+    if exp < 0:
+        throw Error("pangkat() hanya menerima eksponen >= 0")
+    if exp == 0:
+        return 1
+    let hasil = 1
+    let i = 0
+    while i < exp:
+        hasil = hasil * dasar
+        i = i + 1
+    return hasil
+
+const pow = pangkat
+
+
+## Bilangan prima? Cek sederhana sampai akar.
+fn prima(n: Angka) -> Boolean:
+    if n < 2:
+        return false
+    if n == 2:
+        return true
+    if n % 2 == 0:
+        return false
+    let i = 3
+    while i * i <= n:
+        if n % i == 0:
+            return false
+        i = i + 2
+    return true
+
+const isPrime = prima
+
+
+## Faktorial rekursif.
+fn faktorial(n: Angka) -> Angka:
+    if n <= 1:
+        return 1
+    return n * faktorial(n - 1)
+
+const factorial = faktorial
+
+
+## Bilangan Fibonacci ke-n.
+fn fibonacci(n: Angka) -> Angka:
+    if n <= 1:
+        return n
+    let a = 0
+    let b = 1
+    let i = 2
+    while i <= n:
+        const next = a + b
+        a = b
+        b = next
+        i = i + 1
+    return b
+
+
+## Deret Fibonacci sebagai Daftar.
+fn fibonacciDaftar(n: Angka) -> Daftar<Angka>:
+    let hasil = []
+    let i = 0
+    while i < n:
+        hasil = hasil + [fibonacci(i)]
+        i = i + 1
+    return hasil
+
+const fibList = fibonacciDaftar
+
+
+## Pembagi persekutuan terbesar (Euclidean).
+fn fpb(a: Angka, b: Angka) -> Angka:
+    let x = mutlak(a)
+    let y = mutlak(b)
+    while y != 0:
+        const t = y
+        y = x % y
+        x = t
+    return x
+
+const gcd = fpb
+
+
+## Kelipatan persekutuan terkecil.
+fn kpk(a: Angka, b: Angka) -> Angka:
+    if a == 0 or b == 0:
+        return 0
+    return mutlak(a * b) / fpb(a, b)
+
+const lcm = kpk
+
+
+# ============================================================
+# 2. Daftar
+# ============================================================
+
+## Jumlah semua elemen Daftar<Angka>.
+fn jumlah(xs: Daftar<Angka>) -> Angka:
+    let total = 0
+    for x in xs:
+        total = total + x
+    return total
+
+const sum = jumlah
+
+
+## Rata-rata.
+fn rataRata(xs: Daftar<Angka>) -> Angka:
+    if panjang(xs) == 0:
+        throw Error("rataRata() tidak bisa untuk Daftar kosong")
+    return jumlah(xs) / panjang(xs)
+
+const average = rataRata
+
+
+## Nilai maksimum di dalam Daftar.
+fn maksDaftar(xs: Daftar<Angka>) -> Angka?:
+    if panjang(xs) == 0:
+        return null
+    let best = xs[0]
+    for x in xs:
+        if x > best:
+            best = x
+    return best
+
+const maxList = maksDaftar
+
+
+## Nilai minimum di dalam Daftar.
+fn minDaftar(xs: Daftar<Angka>) -> Angka?:
+    if panjang(xs) == 0:
+        return null
+    let best = xs[0]
+    for x in xs:
+        if x < best:
+            best = x
+    return best
+
+const minList = minDaftar
+
+
+## Transformasi setiap elemen.
+fn petakan(xs: Daftar<Angka>, f: (Angka) -> Angka) -> Daftar<Angka>:
+    let hasil = []
+    for x in xs:
+        hasil = hasil + [f(x)]
+    return hasil
+
+const mapList = petakan
+
+
+## Filter elemen berdasarkan predikat.
+fn saring(xs: Daftar<Angka>, pred: (Angka) -> Boolean) -> Daftar<Angka>:
+    let hasil = []
+    for x in xs:
+        if pred(x):
+            hasil = hasil + [x]
+    return hasil
+
+const filterList = saring
+
+
+## Reduksi Daftar jadi satu nilai.
+fn lipat(xs: Daftar<Angka>, awal: Angka, f: (Angka, Angka) -> Angka) -> Angka:
+    let acc = awal
+    for x in xs:
+        acc = f(acc, x)
+    return acc
+
+const reduceList = lipat
+
+
+## Rentang seperti `0..n` tapi sebagai fungsi eksplisit.
+fn rentangDaftar(mulai: Angka, akhir: Angka) -> Daftar<Angka>:
+    let hasil = []
+    let i = mulai
+    while i < akhir:
+        hasil = hasil + [i]
+        i = i + 1
+    return hasil
+
+const rangeList = rentangDaftar
+
+
+## Balik urutan Daftar.
+fn balik(xs: Daftar<Angka>) -> Daftar<Angka>:
+    let hasil = []
+    let i = panjang(xs) - 1
+    while i >= 0:
+        hasil = hasil + [xs[i]]
+        i = i - 1
+    return hasil
+
+const reverseList = balik
+
+
+## Cek keberadaan elemen.
+fn berisi(xs: Daftar<Angka>, x: Angka) -> Boolean:
+    for item in xs:
+        if item == x:
+            return true
+    return false
+
+const containsList = berisi
+
+
+## Cari index elemen. Return -1 kalau tidak ketemu.
+fn cariIndex(xs: Daftar<Angka>, x: Angka) -> Angka:
+    let i = 0
+    while i < panjang(xs):
+        if xs[i] == x:
+            return i
+        i = i + 1
+    return -1
+
+const indexOfList = cariIndex
+
+
+## Hapus duplikat, pertahankan urutan.
+fn unik(xs: Daftar<Angka>) -> Daftar<Angka>:
+    let hasil = []
+    for x in xs:
+        if not berisi(hasil, x):
+            hasil = hasil + [x]
+    return hasil
+
+const unique = unik
+
+
+## Potong Daftar dari index `mulai` sampai `akhir` (eksklusif).
+fn potong(xs: Daftar<Angka>, mulai: Angka, akhir: Angka) -> Daftar<Angka>:
+    let hasil = []
+    let i = mulai
+    const batas = min(akhir, panjang(xs))
+    while i < batas:
+        if i >= 0:
+            hasil = hasil + [xs[i]]
+        i = i + 1
+    return hasil
+
+const sliceList = potong
+
+
+## Urutkan Daftar<Angka> naik (bubble sort — untuk referensi).
+## Untuk produksi, nanti akan diganti dengan sort bawaan.
+fn urutkan(xs: Daftar<Angka>) -> Daftar<Angka>:
+    const salinan = potong(xs, 0, panjang(xs))
+    const n = panjang(salinan)
+    let i = 0
+    while i < n:
+        let j = 0
+        while j < n - i - 1:
+            if salinan[j] > salinan[j + 1]:
+                const t = salinan[j]
+                salinan[j] = salinan[j + 1]
+                salinan[j + 1] = t
+            j = j + 1
+        i = i + 1
+    return salinan
+
+const sortList = urutkan
+
+
+# ============================================================
+# 3. Teks
+# ============================================================
+
+## Panjang Teks.
+fn panjangTeks(s: Teks) -> Angka:
+    return panjang(s)
+
+const lengthText = panjangTeks
+
+
+## Cek apakah Teks mengandung substring.
+fn mengandung(s: Teks, sub: Teks) -> Boolean:
+    if panjang(sub) == 0:
+        return true
+    if panjang(sub) > panjang(s):
+        return false
+    let i = 0
+    while i <= panjang(s) - panjang(sub):
+        if potongTeks(s, i, i + panjang(sub)) == sub:
+            return true
+        i = i + 1
+    return false
+
+const containsText = mengandung
+
+
+## Potong Teks dari index `mulai` sampai `akhir` (eksklusif).
+fn potongTeks(s: Teks, mulai: Angka, akhir: Angka) -> Teks:
+    let hasil = ""
+    let i = mulai
+    const batas = min(akhir, panjang(s))
+    while i < batas:
+        if i >= 0:
+            hasil = hasil + s[i]
+        i = i + 1
+    return hasil
+
+const sliceText = potongTeks
+
+
+## Ubah ke huruf kapital.
+## Catatan: ini versi ASCII sederhana. Unicode akan ditangani nanti.
+fn keKapital(s: Teks) -> Teks:
+    let hasil = ""
+    for c in s:
+        const kode = kodeHuruf(c)
+        if kode >= 97 and kode <= 122:
+            hasil = hasil + hurufDariKode(kode - 32)
+        else:
+            hasil = hasil + c
+    return hasil
+
+const upperCase = keKapital
+
+
+## Ubah ke huruf kecil.
+fn keKecil(s: Teks) -> Teks:
+    let hasil = ""
+    for c in s:
+        const kode = kodeHuruf(c)
+        if kode >= 65 and kode <= 90:
+            hasil = hasil + hurufDariKode(kode + 32)
+        else:
+            hasil = hasil + c
+    return hasil
+
+const lowerCase = keKecil
+
+
+## Kode ASCII dari karakter tunggal.
+fn kodeHuruf(c: Teks) -> Angka:
+    # Ini masih menggunakan tabel internal. Nanti akan diganti
+    # dengan built-in `ord()`.
+    const tabel = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    let i = 0
+    while i < panjang(tabel):
+        if tabel[i] == c:
+            return 32 + i
+        i = i + 1
+    return 0
+
+
+## Karakter dari kode ASCII.
+fn hurufDariKode(kode: Angka) -> Teks:
+    const tabel = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    const index = kode - 32
+    if index < 0 or index >= panjang(tabel):
+        return ""
+    return tabel[index]
+
+
+## Pisahkan Teks berdasarkan pemisah.
+fn pisah(s: Teks, pemisah: Teks) -> Daftar<Teks>:
+    let hasil = []
+    let buffer = ""
+    let i = 0
+    const panjangPemisah = panjang(pemisah)
+
+    if panjangPemisah == 0:
+        for c in s:
+            hasil = hasil + [c]
+        return hasil
+
+    while i < panjang(s):
+        if potongTeks(s, i, i + panjangPemisah) == pemisah:
+            hasil = hasil + [buffer]
+            buffer = ""
+            i = i + panjangPemisah
+        else:
+            buffer = buffer + s[i]
+            i = i + 1
+
+    hasil = hasil + [buffer]
+    return hasil
+
+const splitText = pisah
+
+
+## Gabung Daftar<Teks> dengan pemisah.
+fn gabung(xs: Daftar<Teks>, pemisah: Teks) -> Teks:
+    if panjang(xs) == 0:
+        return ""
+    let hasil = xs[0]
+    let i = 1
+    while i < panjang(xs):
+        hasil = hasil + pemisah + xs[i]
+        i = i + 1
+    return hasil
+
+const joinText = gabung
+
+
+## Buang spasi di awal dan akhir.
+fn pangkas(s: Teks) -> Teks:
+    let mulai = 0
+    let akhir = panjang(s)
+
+    while mulai < akhir and s[mulai] == " ":
+        mulai = mulai + 1
+
+    while akhir > mulai and s[akhir - 1] == " ":
+        akhir = akhir - 1
+
+    return potongTeks(s, mulai, akhir)
+
+const trimText = pangkas
+
+
+## Ganti semua kemunculan `cari` dengan `ganti`.
+fn gantiTeks(s: Teks, cari: Teks, ganti: Teks) -> Teks:
+    const bagian = pisah(s, cari)
+    return gabung(bagian, ganti)
+
+const replaceText = gantiTeks
+
+
+## Ulangi Teks n kali.
+fn ulangTeks(s: Teks, n: Angka) -> Teks:
+    let hasil = ""
+    let i = 0
+    while i < n:
+        hasil = hasil + s
+        i = i + 1
+    return hasil
+
+const repeatText = ulangTeks
+
+
+## Cek apakah Teks dimulai dengan prefix.
+fn diawali(s: Teks, prefix: Teks) -> Boolean:
+    if panjang(prefix) > panjang(s):
+        return false
+    return potongTeks(s, 0, panjang(prefix)) == prefix
+
+const startsWith = diawali
+
+
+## Cek apakah Teks diakhiri dengan suffix.
+fn diakhiri(s: Teks, suffix: Teks) -> Boolean:
+    if panjang(suffix) > panjang(s):
+        return false
+    return potongTeks(s, panjang(s) - panjang(suffix), panjang(s)) == suffix
+
+const endsWith = diakhiri
+
+
+# ============================================================
+# 4. Boolean & Perbandingan
+# ============================================================
+
+## Kembalikan `a` kalau `kondisi` benar, `b` kalau salah.
+## Berguna untuk ekspresi kondisional inline.
+fn pilih(kondisi: Boolean, a: Angka, b: Angka) -> Angka:
+    if kondisi:
+        return a
+    return b
+
+const choose = pilih
+
+
+## Kebalikan dari nilai Boolean.
+fn tidak(x: Boolean) -> Boolean:
+    return not x
+
+const negate = tidak
+
+
+# ============================================================
+# 5. Util Daftar Khusus untuk Debugging
+# ============================================================
+
+## Tampilkan Daftar satu per satu, satu elemen per baris.
+fn tampilkan(xs: Daftar<Angka>):
+    for x in xs:
+        tulis(x)
+
+const printList = tampilkan
+
+
+## Tampilkan Daftar dengan prefix label.
+fn tampilkanLabel(label: Teks, xs: Daftar<Angka>):
+    let baris = label + ": ["
+    let i = 0
+    while i < panjang(xs):
+        baris = baris + Teks(xs[i])
+        if i < panjang(xs) - 1:
+            baris = baris + ", "
+        i = i + 1
+    baris = baris + "]"
+    tulis(baris)
+
+const printLabeled = tampilkanLabel
