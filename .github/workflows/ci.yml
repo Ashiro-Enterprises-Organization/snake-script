@@ -1,0 +1,229 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# Batalkan run lama kalau ada push baru di branch/PR yang sama
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Batasi permission default — job bisa minta lebih kalau perlu
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
+  FORCE_COLOR: 1
+
+jobs:
+  # ============================================================
+  # 1. Lint — ESLint + Prettier check
+  # ============================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+  # ============================================================
+  # 2. Type check — TypeScript strict, tanpa emit
+  # ============================================================
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+  # ============================================================
+  # 3. Test — Vitest di beberapa versi Node
+  # ============================================================
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: [20, 22]
+        include:
+          - os: macos-latest
+            node: 20
+          - os: windows-latest
+            node: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --reporter=verbose
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 20
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ============================================================
+  # 4. Build — verifikasi output compile bersih
+  # ============================================================
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist output
+        run: |
+          test -f dist/cli.js || (echo "dist/cli.js tidak ada" && exit 1)
+          test -f dist/index.js || (echo "dist/index.js tidak ada" && exit 1)
+
+      - name: Smoke test CLI
+        run: |
+          node dist/cli.js --version
+          node dist/cli.js info
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  # ============================================================
+  # 5. End-to-end — jalankan contoh program
+  # ============================================================
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Run halo.snake
+        run: |
+          output=$(node dist/cli.js run examples/halo.snake --no-color)
+          echo "$output"
+          echo "$output" | grep -q "Halo, dunia!" || (echo "Output tidak sesuai" && exit 1)
+
+      - name: Run faktorial.snake
+        run: |
+          output=$(node dist/cli.js run examples/faktorial.snake --no-color)
+          echo "$output"
+          echo "$output" | grep -q "5! = 120" || (echo "Output tidak sesuai" && exit 1)
+
+      - name: Check syntax (no run)
+        run: |
+          node dist/cli.js check examples/halo.snake --no-color
+
+  # ============================================================
+  # 6. Gate — job final yang jadi status check utama
+  # ============================================================
+  ci:
+    name: CI
+    if: always()
+    needs: [lint, typecheck, test, build, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs
+        run: |
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "lint gagal"
+            exit 1
+          fi
+          if [ "${{ needs.typecheck.result }}" != "success" ]; then
+            echo "typecheck gagal"
+            exit 1
+          fi
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "test gagal"
+            exit 1
+          fi
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "build gagal"
+            exit 1
+          fi
+          if [ "${{ needs.e2e.result }}" != "success" ]; then
+            echo "e2e gagal"
+            exit 1
+          fi
+          echo "Semua job sukses"
