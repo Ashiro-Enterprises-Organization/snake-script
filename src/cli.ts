@@ -2,24 +2,10 @@
 
 /**
  * Snake Script — CLI
- *
- * Entry point untuk command `snake`.
- *
- * Perintah:
- *   snake run <file>       Jalankan program
- *   snake check <file>     Type-check saja (belum ada analyzer, sementara parse-only)
- *   snake repl             Mode interaktif
- *   snake fmt <file>       Format kode (belum diimplementasikan)
- *   snake init <nama>      Buat proyek baru
- *   snake info             Info versi & lingkungan
- *
- * Desain mengikuti konvensi cargo/deno: profesional, no emoji,
- * error dengan snippet, exit code yang jelas.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as process from "node:process";
 import * as readline from "node:readline";
 
 import { Lexer, TokenStream } from "./lexer.ts";
@@ -43,10 +29,10 @@ const EXIT_OK = 0;
 const EXIT_COMPILE_ERROR = 1;
 const EXIT_RUNTIME_ERROR = 2;
 const EXIT_FILE_NOT_FOUND = 3;
-const EXIT_USAGE = 64; // sysexits.h
+const EXIT_USAGE = 64;
 
 // ============================================================
-// ANSI Colors (dideteksi otomatis)
+// ANSI Colors
 // ============================================================
 
 const useColor =
@@ -75,7 +61,6 @@ function main(): void {
     process.exit(EXIT_USAGE);
   }
 
-  // Global flags
   if (args.includes("-v") || args.includes("--version")) {
     console.log(`${BIN_NAME} ${VERSION}`);
     process.exit(EXIT_OK);
@@ -146,7 +131,6 @@ function cmdRun(args: string[]): void {
     format: flags.json ? "json" : "pretty",
   });
 
-  // Lexer + Parser
   const lexer = new Lexer(source, { file: resolved, reporter });
   const stream = lexer.tokenize();
   const parser = new Parser(stream, { file: resolved, reporter });
@@ -163,7 +147,6 @@ function cmdRun(args: string[]): void {
     console.error(`${c.dim}Menjalankan ${path.basename(resolved)}${c.reset}`);
   }
 
-  // Interpreter
   const interpreter = new Interpreter({
     file: resolved,
     reporter,
@@ -183,7 +166,6 @@ function cmdRun(args: string[]): void {
       reporter.flush();
       process.exit(EXIT_RUNTIME_ERROR);
     }
-    // Unexpected error — bukan salah user
     console.error(`${c.red}internal error:${c.reset} ${(e as Error).message}`);
     if (process.env.SNAKE_DEBUG) {
       console.error((e as Error).stack);
@@ -227,7 +209,7 @@ function parseRunFlags(args: string[]): { file: string | null; flags: RunFlags }
     else if (arg === "--json") flags.json = true;
     else if (arg === "--time") flags.time = true;
     else if (arg === "-w" || arg === "--watch") flags.watch = true;
-    else if (arg === "--no-color") { /* already handled globally */ }
+    else if (arg === "--no-color") { /* handled globally */ }
     else if (!arg.startsWith("-")) file = arg;
   }
 
@@ -289,7 +271,6 @@ function cmdRepl(_args: string[]): void {
     terminal: true,
   });
 
-  // Environment persisten antar baris
   const interpreter = new Interpreter({
     file: "<repl>",
     reporter: new Reporter({ color: false, format: "plain" }),
@@ -303,7 +284,6 @@ function cmdRepl(_args: string[]): void {
   rl.on("line", (line) => {
     const trimmed = line.trim();
 
-    // REPL commands
     if (trimmed === ".keluar" || trimmed === ".exit" || trimmed === ".quit") {
       rl.close();
       return;
@@ -326,11 +306,8 @@ function cmdRepl(_args: string[]): void {
       return;
     }
 
-    // Kumpulkan baris sampai selesai (indentasi menandakan lanjutan)
     buffer += (buffer ? "\n" : "") + line;
 
-    // Cek apakah buffer sudah "lengkap" — heuristik sederhana:
-    // kalau baris terakhir tidak kosong dan tidak berakhir `:`, coba parse.
     const isIncomplete = endsWithBlockOpener(line);
 
     if (isIncomplete) {
@@ -339,7 +316,6 @@ function cmdRepl(_args: string[]): void {
       return;
     }
 
-    // Coba eksekusi
     const reporter = new Reporter({ color: true, format: "pretty" });
 
     try {
@@ -425,7 +401,6 @@ function cmdInit(args: string[]): void {
   fs.mkdirSync(target, { recursive: true });
   fs.mkdirSync(path.join(target, "src"), { recursive: true });
 
-  // main.snake
   fs.writeFileSync(
     path.join(target, "src", "main.snake"),
     [
@@ -437,7 +412,6 @@ function cmdInit(args: string[]): void {
     ].join("\n"),
   );
 
-  // README.md
   fs.writeFileSync(
     path.join(target, "README.md"),
     [
@@ -454,7 +428,6 @@ function cmdInit(args: string[]): void {
     ].join("\n"),
   );
 
-  // .gitignore
   fs.writeFileSync(
     path.join(target, ".gitignore"),
     ["dist/", "node_modules/", "*.snakec", ".snake-cache/", ""].join("\n"),

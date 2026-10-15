@@ -1,16 +1,5 @@
 /**
  * Snake Script — Interpreter
- *
- * Mengeksekusi AST secara langsung (tree-walking interpreter).
- *
- * Arsitektur:
- * - Environment: scope chain untuk variabel
- * - Value: runtime value (number, string, bool, null, list, map, function)
- * - Control flow: return/break/continue dilempar sebagai sinyal internal
- * - Error handling: try/catch lewat exception
- *
- * Interpreter bekerja setelah analyzer (kalau ada) atau langsung
- * dari parser. Untuk sekarang, tanpa type-checking runtime yang ketat.
  */
 
 import type {
@@ -22,19 +11,14 @@ import type {
   ParamNode,
   PatternNode,
   BinaryOperator,
-  UnaryOperator,
-  AssignOperator,
   FunctionDeclNode,
   VarDeclNode,
-  FunctionExprNode,
   IfStmtNode,
   WhileStmtNode,
   ForStmtNode,
   MatchStmtNode,
   TryStmtNode,
   ReturnStmtNode,
-  BreakStmtNode,
-  ContinueStmtNode,
   ThrowStmtNode,
   ExprStmtNode,
   ImportStmtNode,
@@ -53,7 +37,7 @@ import type {
   InterpolatedStringNode,
   FunctionExprNode,
   ParenExprNode,
-  CaseClauseNode,
+  Location,
 } from "./ast.ts";
 
 import type { Reporter } from "./diagnostics.ts";
@@ -63,19 +47,6 @@ import { ErrorCode } from "./diagnostics.ts";
 // Runtime Values
 // ============================================================
 
-/**
- * Nilai runtime. Snake Script pakai representasi TypeScript native
- * di mana memungkinkan:
- * - Angka   -> number
- * - Teks    -> string
- * - Boolean -> boolean
- * - Null    -> null
- * - Kosong  -> undefined (void return)
- * - Daftar  -> JS Array
- * - Peta    -> Map
- * - Fungsi  -> FunctionValue (closure)
- * - Error   -> ErrorValue
- */
 export type Value =
   | number
   | string
@@ -88,26 +59,15 @@ export type Value =
   | ErrorValue
   | NativeFunctionValue;
 
-/**
- * Fungsi user-defined. Menyimpan:
- * - params: definisi parameter
- * - body: statement atau ekspresi (arrow)
- * - closure: environment saat fungsi dibuat
- * - name: untuk debugging
- */
 export interface FunctionValue {
   readonly kind: "Function";
   readonly name: string;
   readonly params: readonly ParamNode[];
   readonly body: BlockNode | ExprNode;
   readonly closure: Environment;
-  /** True kalau body adalah expression (arrow function). */
   readonly isArrow: boolean;
 }
 
-/**
- * Fungsi bawaan yang diimplementasikan di TypeScript.
- */
 export interface NativeFunctionValue {
   readonly kind: "NativeFunction";
   readonly name: string;
@@ -115,9 +75,6 @@ export interface NativeFunctionValue {
   readonly call: (args: Value[]) => Value;
 }
 
-/**
- * Error value — dipakai oleh `throw` dan `catch`.
- */
 export interface ErrorValue {
   readonly kind: "Error";
   readonly message: string;
@@ -128,10 +85,6 @@ export interface ErrorValue {
 // Environment
 // ============================================================
 
-/**
- * Scope chain. Setiap environment punya pointer ke parent.
- * Lookup berjalan naik sampai ketemu atau null.
- */
 export class Environment {
   private readonly values = new Map<string, Value>();
   readonly parent: Environment | null;
@@ -140,18 +93,10 @@ export class Environment {
     this.parent = parent;
   }
 
-  /**
-   * Definisikan variabel baru di scope saat ini.
-   */
   define(name: string, value: Value): void {
     this.values.set(name, value);
   }
 
-  /**
-   * Cari nilai variabel. Cari di scope ini dulu, lalu parent.
-   * Return undefined kalau tidak ketemu. Ini ambigu dengan nilai
-   * `undefined` — kita pakai has() untuk cek keberadaan.
-   */
   get(name: string): Value {
     if (this.values.has(name)) {
       return this.values.get(name);
@@ -162,19 +107,12 @@ export class Environment {
     return undefined;
   }
 
-  /**
-   * Cek apakah variabel ada di scope chain.
-   */
   has(name: string): boolean {
     if (this.values.has(name)) return true;
     if (this.parent) return this.parent.has(name);
     return false;
   }
 
-  /**
-   * Assign nilai ke variabel yang sudah ada. Cari di scope chain.
-   * Return true kalau berhasil, false kalau variabel belum didefinisikan.
-   */
   assign(name: string, value: Value): boolean {
     if (this.values.has(name)) {
       this.values.set(name, value);
@@ -186,9 +124,6 @@ export class Environment {
     return false;
   }
 
-  /**
-   * Snapshot untuk debugging.
-   */
   snapshot(): Record<string, Value> {
     return Object.fromEntries(this.values);
   }
@@ -198,34 +133,31 @@ export class Environment {
 // Control Flow Signals
 // ============================================================
 
-/**
- * Sinyal `return`. Dilempar dari dalam fungsi untuk unwind stack
- * sampai ketemu pemanggil fungsi.
- */
 class ReturnSignal {
-  constructor(public readonly value: Value) {}
+  readonly value: Value;
+
+  constructor(value: Value) {
+    this.value = value;
+  }
 }
 
-/**
- * Sinyal `break`. Dilempar untuk keluar dari loop.
- */
 class BreakSignal {}
 
-/**
- * Sinyal `continue`. Dilempar untuk lanjut ke iterasi berikutnya.
- */
 class ContinueSignal {}
 
-/**
- * Error runtime yang di-throw oleh program Snake Script.
- */
+// ============================================================
+// Runtime Error
+// ============================================================
+
 export class RuntimeError extends Error {
-  constructor(
-    public readonly value: ErrorValue,
-    public readonly location?: import("./ast.ts").Location,
-  ) {
+  readonly value: ErrorValue;
+  readonly location?: Location;
+
+  constructor(value: ErrorValue, location?: Location) {
     super(value.message);
     this.name = "RuntimeError";
+    this.value = value;
+    this.location = location;
   }
 }
 
@@ -236,9 +168,7 @@ export class RuntimeError extends Error {
 export interface InterpreterOptions {
   readonly file: string;
   readonly reporter: Reporter;
-  /** Callback untuk output `print` / `tulis`. Default: stdout. */
   readonly onPrint?: (line: string) => void;
-  /** Direktori kerja untuk import relatif. Default: cwd. */
   readonly cwd?: string;
 }
 
@@ -252,10 +182,8 @@ export class Interpreter {
   private readonly onPrint: (line: string) => void;
   private readonly cwd: string;
 
-  /** Global environment. Persisten sepanjang eksekusi. */
   readonly global: Environment;
 
-  /** Cache modul yang sudah di-import (kalau ada). */
   private readonly moduleCache = new Map<string, Environment>();
 
   constructor(opts: InterpreterOptions) {
@@ -267,13 +195,6 @@ export class Interpreter {
     this.installBuiltins();
   }
 
-  // ==========================================================
-  // Public API
-  // ==========================================================
-
-  /**
-   * Jalankan program.
-   */
   run(program: ProgramNode): void {
     try {
       for (const stmt of program.statements) {
@@ -316,14 +237,9 @@ export class Interpreter {
         });
         return;
       }
-      // Error tak terduga
       throw e;
     }
   }
-
-  // ==========================================================
-  // Statement Execution
-  // ==========================================================
 
   private executeStatement(stmt: StmtNode, env: Environment): void {
     switch (stmt.kind) {
@@ -364,17 +280,12 @@ export class Interpreter {
     }
   }
 
-  // ==========================================================
-  // Statements — Declarations
-  // ==========================================================
-
   private execVarDecl(stmt: VarDeclNode, env: Environment): void {
     let value: Value;
 
     if (stmt.initializer) {
       value = this.evaluate(stmt.initializer, env);
     } else {
-      // Tanpa initializer: isi default per tipe
       value = this.defaultValueForType(stmt.typeAnnotation);
     }
 
@@ -394,17 +305,12 @@ export class Interpreter {
   }
 
   private execTypeDecl(_stmt: TypeDeclNode, _env: Environment): void {
-    // Type hanya compile-time — di runtime tidak ada efek.
-    // Nanti bisa dipakai untuk reflection / debug info.
+    // Type hanya compile-time
   }
 
   private execExprStmt(stmt: ExprStmtNode, env: Environment): void {
     this.evaluate(stmt.expression, env);
   }
-
-  // ==========================================================
-  // Statements — Control Flow
-  // ==========================================================
 
   private execIf(stmt: IfStmtNode, env: Environment): void {
     if (this.truthy(this.evaluate(stmt.condition, env), stmt.condition)) {
@@ -464,7 +370,6 @@ export class Interpreter {
           caseEnv.define(name, value);
         }
 
-        // Guard
         if (c.guard) {
           if (!this.truthy(this.evaluate(c.guard, caseEnv), c.guard)) {
             continue;
@@ -514,8 +419,6 @@ export class Interpreter {
       if (e instanceof RuntimeError) {
         caught = e;
       } else if (e instanceof ReturnSignal || e instanceof BreakSignal || e instanceof ContinueSignal) {
-        // Sinyal kontrol flow tidak ditangkap try/catch
-        // tapi finally tetap dijalankan
         this.runFinally(stmt, env);
         throw e;
       } else {
@@ -529,7 +432,6 @@ export class Interpreter {
       try {
         this.executeBlock(stmt.catchBody, catchEnv);
       } catch (e) {
-        // Kalau body catch juga throw, finally tetap jalan
         this.runFinally(stmt, env);
         throw e;
       }
@@ -556,17 +458,8 @@ export class Interpreter {
   }
 
   private execImport(stmt: ImportStmtNode, _env: Environment): void {
-    // Implementasi import lengkap butuh file system loader.
-    // Untuk MVP, kita hanya dukung import dari module cache
-    // dan stdlib built-in.
-    //
-    // Nanti: load file, parse, execute di environment baru,
-    // lalu bind hasilnya ke env saat ini.
-
     if (!this.moduleCache.has(stmt.source)) {
-      // Cek apakah ini stdlib internal
       if (stmt.source === "stdlib") {
-        // Stdlib biasanya di-inject via installBuiltins()
         this.moduleCache.set(stmt.source, this.global);
       } else {
         this.reporter.report({
@@ -583,7 +476,6 @@ export class Interpreter {
       }
     }
 
-    // Bind nama yang di-import ke env saat ini
     const mod = this.moduleCache.get(stmt.source)!;
     if (stmt.importKind === "named") {
       for (const name of stmt.names) {
@@ -591,11 +483,9 @@ export class Interpreter {
         _env.define(name, v);
       }
     } else if (stmt.importKind === "namespace") {
-      // Wrap semua sebagai Map
       const namespace = new Map<string, Value>(Object.entries(mod.snapshot()));
       _env.define(stmt.alias!, namespace);
     } else {
-      // default import
       _env.define(stmt.alias!, mod);
     }
   }
@@ -664,7 +554,6 @@ export class Interpreter {
   }
 
   private evalBinary(expr: BinaryExprNode, env: Environment): Value {
-    // Short-circuit untuk and/or
     if (expr.operator === "and") {
       const left = this.evaluate(expr.left, env);
       if (!this.truthy(left, expr.left)) return false;
@@ -752,8 +641,6 @@ export class Interpreter {
   }
 
   private evalAssign(expr: AssignExprNode, env: Environment): Value {
-    // Kalau operator `=`, nilai = evaluate(value)
-    // Kalau `+=`, dst: nilai = current op value
     let newValue: Value;
 
     if (expr.operator === "=") {
@@ -811,9 +698,7 @@ export class Interpreter {
         obj.set(target.property, value);
         return;
       }
-      // Kalau object adalah Map-like object, treat sebagai peta
       if (typeof obj === "object" && obj !== null && !Array.isArray(obj)) {
-        // Fallback: define di object
         (obj as unknown as Record<string, unknown>)[target.property] = value;
         return;
       }
@@ -885,7 +770,6 @@ export class Interpreter {
   private evalMember(expr: MemberExprNode, env: Environment): Value {
     const obj = this.evaluate(expr.object, env);
 
-    // Map: akses via key
     if (obj instanceof Map) {
       if (!obj.has(expr.property)) {
         throw new RuntimeError(
@@ -900,13 +784,10 @@ export class Interpreter {
       return obj.get(expr.property);
     }
 
-    // String: properti khusus
     if (typeof obj === "string") {
       if (expr.property === "length" || expr.property === "panjang") {
         return obj.length;
       }
-      // Fallback: method belum diimplementasikan di sini.
-      // Bisa diakses via method String.prototype.
       const prop = (obj as unknown as Record<string, Value>)[expr.property];
       if (prop !== undefined) return prop;
       throw new RuntimeError(
@@ -919,7 +800,6 @@ export class Interpreter {
       );
     }
 
-    // List: properti khusus
     if (Array.isArray(obj)) {
       if (expr.property === "length" || expr.property === "panjang") {
         return obj.length;
@@ -934,7 +814,6 @@ export class Interpreter {
       );
     }
 
-    // Object literal (dari TS interop atau map dalam bentuk object)
     if (typeof obj === "object" && obj !== null) {
       const prop = (obj as unknown as Record<string, Value>)[expr.property];
       if (prop !== undefined || expr.property in (obj as object)) {
@@ -964,7 +843,6 @@ export class Interpreter {
     const obj = this.evaluate(expr.object, env);
     const idx = this.evaluate(expr.index, env);
 
-    // Daftar: index numerik
     if (Array.isArray(obj)) {
       if (typeof idx !== "number") {
         throw new RuntimeError(
@@ -989,7 +867,6 @@ export class Interpreter {
       return obj[idx];
     }
 
-    // Peta: index dengan string
     if (obj instanceof Map) {
       const key = String(idx);
       if (!obj.has(key)) {
@@ -1005,7 +882,6 @@ export class Interpreter {
       return obj.get(key);
     }
 
-    // Teks: index karakter
     if (typeof obj === "string") {
       if (typeof idx !== "number") {
         throw new RuntimeError(
@@ -1041,10 +917,8 @@ export class Interpreter {
   }
 
   private evalCall(expr: CallExprNode, env: Environment): Value {
-    // Khusus: `rentang(a, b)` dari range syntax
     const callee = this.evaluate(expr.callee, env);
     const args = expr.args.map((a) => this.evaluate(a, env));
-
     return this.callFunction(callee, args, expr);
   }
 
@@ -1053,7 +927,6 @@ export class Interpreter {
     args: Value[],
     expr: CallExprNode,
   ): Value {
-    // Fungsi native
     if (this.isNativeFunction(callee)) {
       if (callee.arity !== "variadic" && args.length !== callee.arity) {
         throw new RuntimeError(
@@ -1068,9 +941,7 @@ export class Interpreter {
       return callee.call(args);
     }
 
-    // Fungsi user-defined
     if (this.isFunction(callee)) {
-      // Cek jumlah argumen
       const required = callee.params.filter((p) => !p.defaultValue).length;
       const max = callee.params.length;
       if (args.length < required || args.length > max) {
@@ -1085,10 +956,8 @@ export class Interpreter {
         );
       }
 
-      // Buat environment baru untuk eksekusi
       const fnEnv = new Environment(callee.closure);
 
-      // Bind parameter
       for (let i = 0; i < callee.params.length; i++) {
         const param = callee.params[i]!;
         let value: Value;
@@ -1102,13 +971,12 @@ export class Interpreter {
         fnEnv.define(param.name, value);
       }
 
-      // Eksekusi body
       try {
         if (callee.isArrow) {
           return this.evaluate(callee.body as ExprNode, fnEnv);
         }
         this.executeBlock(callee.body as BlockNode, fnEnv);
-        return undefined; // fungsi tanpa return eksplisit
+        return undefined;
       } catch (e) {
         if (e instanceof ReturnSignal) {
           return e.value;
@@ -1167,7 +1035,7 @@ export class Interpreter {
   }
 
   // ==========================================================
-  // Operators — Helpers
+  // Operators
   // ==========================================================
 
   private applyBinaryOp(
@@ -1211,13 +1079,14 @@ export class Interpreter {
   }
 
   private add(left: Value, right: Value, expr: ExprNode): Value {
-    // String concatenation
     if (typeof left === "string" || typeof right === "string") {
       return this.toString(left) + this.toString(right);
     }
-    // Numeric
     if (typeof left === "number" && typeof right === "number") {
       return left + right;
+    }
+    if (Array.isArray(left) && Array.isArray(right)) {
+      return [...left, ...right];
     }
     throw new RuntimeError(
       {
@@ -1258,7 +1127,7 @@ export class Interpreter {
       return fn(left, right);
     }
     if (typeof left === "string" && typeof right === "string") {
-      return fn(left.charCodeAt(0) - right.charCodeAt(0), 0) || left === right;
+      return left < right;
     }
     throw new RuntimeError(
       {
@@ -1271,7 +1140,7 @@ export class Interpreter {
   }
 
   // ==========================================================
-  // Helpers — Equality, Truthiness, Type
+  // Helpers
   // ==========================================================
 
   private valuesEqual(a: Value, b: Value): boolean {
@@ -1369,8 +1238,6 @@ export class Interpreter {
   }
 
   private defaultValueForType(_type: TypeNode | null): Value {
-    // Untuk sekarang, semua variabel tanpa initializer default ke null.
-    // Nanti bisa diperbaiki dengan type info dari analyzer.
     return null;
   }
 
@@ -1382,7 +1249,6 @@ export class Interpreter {
     }
 
     if (value instanceof Map) {
-      // Iterate key-value pairs sebagai tupel [key, value]
       return Array.from(value.entries()).map(([k, v]) => [k, v] as Value);
     }
 
@@ -1397,12 +1263,10 @@ export class Interpreter {
   }
 
   // ==========================================================
-  // Built-in Functions
+  // Built-ins
   // ==========================================================
 
   private installBuiltins(): void {
-    // === I/O ===
-
     this.defineNative("tulis", 1, (args) => {
       this.onPrint(this.toString(args[0]!));
       return undefined;
@@ -1412,8 +1276,6 @@ export class Interpreter {
       this.onPrint(this.toString(args[0]!));
       return undefined;
     });
-
-    // === Konversi ===
 
     this.defineNative("Angka", 1, (args) => {
       const v = args[0]!;
@@ -1440,8 +1302,6 @@ export class Interpreter {
     this.defineNative("Teks", 1, (args) => {
       return this.toString(args[0]!);
     });
-
-    // === Matematika ===
 
     this.defineNative("panjang", 1, (args) => {
       const v = args[0]!;
@@ -1470,14 +1330,10 @@ export class Interpreter {
       return result;
     });
 
-    // === Error ===
-
     this.defineNative("Error", 1, (args) => {
       const msg = this.toString(args[0]!);
       return { kind: "Error", message: msg } as ErrorValue;
     });
-
-    // === Output debugging ===
 
     this.defineNative("tipe", 1, (args) => {
       return this.typeName(args[0]!);
@@ -1503,9 +1359,6 @@ export class Interpreter {
 // Convenience
 // ============================================================
 
-/**
- * Jalankan program Snake Script.
- */
 export function run(
   program: ProgramNode,
   file: string,

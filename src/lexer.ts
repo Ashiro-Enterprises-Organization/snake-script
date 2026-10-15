@@ -1,36 +1,5 @@
 /**
  * Snake Script — Lexer (Advanced)
- *
- * Mengubah source code menjadi TokenStream yang siap dikonsumsi parser.
- *
- * Arsitektur:
- *
- *   Source string
- *        │
- *        ▼
- *   ┌─────────────┐
- *   │  SourceMap  │   precompute posisi baris → lookup O(log n)
- *   └─────────────┘
- *        │
- *        ▼
- *   ┌─────────────┐
- *   │   Lexer     │   state machine: line-start, in-bracket, in-string
- *   └─────────────┘
- *        │
- *        ▼
- *   ┌─────────────┐
- *   │ TokenStream │   peek/lookahead/mark/reset untuk parser
- *   └─────────────┘
- *
- * Fitur:
- * - Indentasi otomatis (INDENT/DEDENT) dengan deteksi konsistensi
- * - NEWLINE di-skip di dalam bracket ( ) [ ] { }
- * - String interpolation ${...} dengan nested brace tracking
- * - Raw string r"..." tanpa escape processing
- * - Multi-line string """..."""
- * - Doc comment ## untuk dokumentasi
- * - Error recovery: lanjut lexing setelah error, laporkan banyak error
- * - Trivia preservation untuk formatter (opsional)
  */
 
 import type { Location, Position } from "./ast.ts";
@@ -38,36 +7,22 @@ import type { Reporter } from "./diagnostics.ts";
 import { ErrorCode } from "./diagnostics.ts";
 
 // ============================================================
-// SourceMap — Lookup Posisi Berkecepatan Tinggi
+// SourceMap
 // ============================================================
 
-/**
- * Memetakan offset byte ke (line, column) dengan binary search.
- *
- * Kenapa tidak track kolom secara incremental?
- * - Lebih lambat: setiap `advance()` butuh update line/col
- * - Lebih rawan bug: newline handling di berbagai konteks
- * - Binary search O(log n) sangat cepat untuk file normal (< 100k baris)
- *
- * Ini pendekatan yang sama dipakai rustc, esbuild, dan swc.
- */
 export class SourceMap {
-  /** Offset awal setiap baris. `lineStarts[0]` selalu 0. */
   private readonly lineStarts: number[] = [0];
+  readonly source: string;
 
-  constructor(public readonly source: string) {
-    // Precompute semua line start — sekali jalan O(n)
+  constructor(source: string) {
+    this.source = source;
     for (let i = 0; i < source.length; i++) {
-      if (source.charCodeAt(i) === 10 /* \n */) {
+      if (source.charCodeAt(i) === 10) {
         this.lineStarts.push(i + 1);
       }
     }
   }
 
-  /**
-   * Cari index baris (0-based) untuk offset tertentu.
-   * Binary search: cari lineStarts[i] ≤ offset < lineStarts[i+1].
-   */
   private lineIndexOf(offset: number): number {
     let lo = 0;
     let hi = this.lineStarts.length - 1;
@@ -79,9 +34,6 @@ export class SourceMap {
     return lo;
   }
 
-  /**
-   * Konversi offset ke Position (line 1-based, column 1-based).
-   */
   position(offset: number): Position {
     const lineIdx = this.lineIndexOf(offset);
     const lineStart = this.lineStarts[lineIdx]!;
@@ -92,14 +44,11 @@ export class SourceMap {
     };
   }
 
-  /**
-   * Ambil isi satu baris (1-based). Berguna untuk error reporter.
-   */
   lineContent(line: number): string {
     if (line < 1 || line > this.lineStarts.length) return "";
     const start = this.lineStarts[line - 1]!;
     const end = line < this.lineStarts.length
-      ? this.lineStarts[line]! - 1  // -1 untuk buang \n
+      ? this.lineStarts[line]! - 1
       : this.source.length;
     return this.source.slice(start, end);
   }
@@ -114,19 +63,14 @@ export class SourceMap {
 // ============================================================
 
 export type TokenKind =
-  // --- Literals ---
   | "NUMBER"
   | "STRING"
-  | "RAW_STRING"                 // r"..."
-  | "MULTILINE_STRING"           // """..."""
-  | "STRING_INTERP_START"        // "teks${
-  | "STRING_INTERP_MIDDLE"       // }teks${
-  | "STRING_INTERP_END"          // }teks"
-
-  // --- Identifier ---
+  | "RAW_STRING"
+  | "MULTILINE_STRING"
+  | "STRING_INTERP_START"
+  | "STRING_INTERP_MIDDLE"
+  | "STRING_INTERP_END"
   | "IDENTIFIER"
-
-  // --- Keywords ---
   | "CONST" | "LET" | "FN" | "RETURN" | "TYPE"
   | "IF" | "ELSE" | "ELIF"
   | "WHILE" | "FOR" | "IN" | "BREAK" | "CONTINUE"
@@ -135,32 +79,23 @@ export type TokenKind =
   | "IMPORT" | "EXPORT" | "FROM" | "AS"
   | "AND" | "OR" | "NOT"
   | "TRUE" | "FALSE" | "NULL"
-
-  // --- Punctuation ---
   | "LPAREN" | "RPAREN"
   | "LBRACKET" | "RBRACKET"
   | "LBRACE" | "RBRACE"
   | "COMMA" | "COLON" | "DOT" | "QUESTION" | "PIPE" | "UNDERSCORE"
-
-  // --- Operators ---
   | "PLUS" | "MINUS" | "STAR" | "SLASH" | "PERCENT" | "STAR_STAR"
   | "EQ" | "EQ_EQ" | "BANG_EQ" | "LT" | "LT_EQ" | "GT" | "GT_EQ"
   | "PLUS_EQ" | "MINUS_EQ" | "STAR_EQ" | "SLASH_EQ" | "PERCENT_EQ"
-  | "ARROW"       // ->
-  | "FAT_ARROW"   // =>
-  | "DOT_DOT"     // ..
-
-  // --- Structural ---
+  | "ARROW"
+  | "FAT_ARROW"
+  | "DOT_DOT"
   | "NEWLINE"
   | "INDENT"
   | "DEDENT"
   | "EOF"
-
-  // --- Trivia (hanya muncul kalau preserveTrivia: true) ---
   | "COMMENT"
   | "DOC_COMMENT"
-  | "BLANK_LINE"
-  ;
+  | "BLANK_LINE";
 
 // ============================================================
 // Token
@@ -168,33 +103,29 @@ export type TokenKind =
 
 export interface Token {
   readonly kind: TokenKind;
-  /** Nilai semantik — sudah diproses (escape, konversi angka, dll). */
   readonly value: string | number | null;
-  /** Teks mentah dari source. Berguna untuk formatter. */
   readonly raw: string;
   readonly loc: Location;
 }
 
 // ============================================================
-// TokenStream — Untuk Parser
+// TokenStream
 // ============================================================
 
-/**
- * Wrapper di atas array token yang menyediakan operasi lookahead,
- * mark/reset, dan skip trivia secara otomatis.
- *
- * Parser akan bekerja dengan TokenStream, bukan array mentah.
- */
 export class TokenStream {
   private pos = 0;
   private readonly marks: number[] = [];
+  private readonly tokens: readonly Token[];
+  private readonly skipTrivia: boolean;
 
-  constructor(
-    private readonly tokens: readonly Token[],
-    private readonly skipTrivia = true,
-  ) {}
+  constructor(tokens: readonly Token[], skipTrivia = true) {
+    if (tokens.length === 0) {
+      throw new Error("TokenStream: tokens tidak boleh kosong (minimal EOF)");
+    }
+    this.tokens = tokens;
+    this.skipTrivia = skipTrivia;
+  }
 
-  /** Lihat token pada offset tertentu tanpa konsumsi. */
   peek(offset = 0): Token {
     let idx = this.pos;
     let remaining = offset;
@@ -208,11 +139,41 @@ export class TokenStream {
       remaining--;
       idx++;
     }
-    // Return EOF
     return this.tokens[this.tokens.length - 1]!;
   }
 
-  /** Konsumsi token saat ini, return yang sebelumnya. */
+  peekKind(offset = 0): TokenKind {
+    return this.peek(offset).kind;
+  }
+
+  current(): Token {
+    return this.peek();
+  }
+
+  check(kind: TokenKind, offset = 0): boolean {
+    return this.peek(offset).kind === kind;
+  }
+
+  previous(offset = 0): Token {
+    let idx = this.pos - 1;
+    let remaining = offset;
+    while (idx >= 0) {
+      const tok = this.tokens[idx]!;
+      if (this.skipTrivia && this.isTrivia(tok)) {
+        idx--;
+        continue;
+      }
+      if (remaining === 0) return tok;
+      remaining--;
+      idx--;
+    }
+    return this.tokens[0]!;
+  }
+
+  previousKind(offset = 0): TokenKind {
+    return this.previous(offset).kind;
+  }
+
   next(): Token {
     while (this.pos < this.tokens.length) {
       const tok = this.tokens[this.pos]!;
@@ -226,12 +187,6 @@ export class TokenStream {
     return this.tokens[this.tokens.length - 1]!;
   }
 
-  /** Cek apakah token saat ini punya kind tertentu. */
-  check(kind: TokenKind): boolean {
-    return this.peek().kind === kind;
-  }
-
-  /** Konsumsi kalau cocok, return true/false. */
   match(kind: TokenKind): boolean {
     if (this.check(kind)) {
       this.next();
@@ -240,30 +195,78 @@ export class TokenStream {
     return false;
   }
 
-  /** Tandai posisi. Bisa di-reset nanti. */
+  tryConsume(kind: TokenKind): Token | null {
+    if (this.check(kind)) {
+      return this.next();
+    }
+    return null;
+  }
+
   mark(): void {
     this.marks.push(this.pos);
   }
 
-  /** Reset ke mark terakhir. */
   reset(): void {
     const m = this.marks.pop();
-    this.pos = m ?? 0;
+    if (m === undefined) {
+      throw new Error("TokenStream.reset(): tidak ada mark aktif");
+    }
+    this.pos = m;
   }
 
-  /** Commit mark terakhir (buang tanpa reset). */
   commit(): void {
-    this.marks.pop();
+    const m = this.marks.pop();
+    if (m === undefined) {
+      throw new Error("TokenStream.commit(): tidak ada mark aktif");
+    }
   }
 
-  /** Index token saat ini (untuk debugging). */
+  saveState(): number {
+    return this.pos;
+  }
+
+  restoreState(state: number): void {
+    if (state < 0 || state > this.tokens.length) {
+      throw new Error(`TokenStream.restoreState(): state tidak valid: ${state}`);
+    }
+    this.pos = state;
+  }
+
+  tryParse<T>(fn: () => T | null): T | null {
+    const saved = this.saveState();
+    const result = fn();
+    if (result === null) {
+      this.restoreState(saved);
+    }
+    return result;
+  }
+
+  isAtEnd(): boolean {
+    return this.peek().kind === "EOF";
+  }
+
   get index(): number {
     return this.pos;
   }
 
-  /** Semua token mentah (untuk tooling seperti formatter). */
+  get length(): number {
+    return this.tokens.length;
+  }
+
   get all(): readonly Token[] {
     return this.tokens;
+  }
+
+  lastLocation(): Location {
+    return this.previous().loc;
+  }
+
+  currentLocation(): Location {
+    return this.peek().loc;
+  }
+
+  get skipsTrivia(): boolean {
+    return this.skipTrivia;
   }
 
   private isTrivia(tok: Token): boolean {
@@ -276,57 +279,40 @@ export class TokenStream {
 }
 
 // ============================================================
-// Karakter — Dispatch Table
+// CharClass
 // ============================================================
 
-const enum CharClass {
-  Whitespace,
-  Newline,
-  Digit,
-  IdentStart,
-  IdentPart,
-  Quote,
-  Operator,
-  Invalid,
-}
+const CharClass = {
+  Whitespace: 0,
+  Newline: 1,
+  Digit: 2,
+  IdentStart: 3,
+  IdentPart: 4,
+  Quote: 5,
+  Operator: 6,
+  Invalid: 7,
+} as const;
 
-/**
- * Lookup table untuk klasifikasi karakter. Cepat dan mudah dibaca
- * dibanding rangkaian if-else.
- */
+type CharClassValue = typeof CharClass[keyof typeof CharClass];
+
 const CHAR_TABLE: Uint8Array = (() => {
   const t = new Uint8Array(128).fill(CharClass.Invalid);
-
-  // Whitespace horizontal
-  t[32] = CharClass.Whitespace;   // spasi
-  t[9]  = CharClass.Whitespace;   // tab
-
-  // Newline
-  t[10] = CharClass.Newline;      // \n
-  t[13] = CharClass.Newline;      // \r
-
-  // Digits
+  t[32] = CharClass.Whitespace;
+  t[9]  = CharClass.Whitespace;
+  t[10] = CharClass.Newline;
+  t[13] = CharClass.Newline;
   for (let c = 48; c <= 57; c++) t[c] = CharClass.Digit;
-
-  // Identifier start
-  for (let c = 65; c <= 90; c++) t[c] = CharClass.IdentStart;   // A-Z
-  for (let c = 97; c <= 122; c++) t[c] = CharClass.IdentStart;  // a-z
-  t[95] = CharClass.IdentStart;   // _
-
-  // Identifier part (sama dengan start + digit, akan di-override di method)
-
-  // Quotes
-  t[34] = CharClass.Quote;        // "
-  t[39] = CharClass.Quote;        // '
-
+  for (let c = 65; c <= 90; c++) t[c] = CharClass.IdentStart;
+  for (let c = 97; c <= 122; c++) t[c] = CharClass.IdentStart;
+  t[95] = CharClass.IdentStart;
+  t[34] = CharClass.Quote;
+  t[39] = CharClass.Quote;
   return t;
 })();
 
-function classify(c: string): CharClass {
+function classify(c: string): CharClassValue {
   const code = c.charCodeAt(0);
-  if (code < 128) return CHAR_TABLE[code] as CharClass;
-  // Unicode letters di luar ASCII: treat sebagai identifier part
-  // (detail: pakai regex untuk cek letter di luar Basic Latin)
+  if (code < 128) return CHAR_TABLE[code] as CharClassValue;
   return /[\p{L}\p{N}]/u.test(c) ? CharClass.IdentStart : CharClass.Invalid;
 }
 
@@ -354,26 +340,14 @@ const KEYWORDS: ReadonlyMap<string, TokenKind> = new Map([
 export interface LexerOptions {
   readonly file: string;
   readonly reporter: Reporter;
-  /** Simpan komentar & baris kosong sebagai trivia. Default false. */
   readonly preserveTrivia?: boolean;
-  /** Mode recovery: lanjut lexing setelah error. Default true. */
   readonly recoverOnError?: boolean;
 }
 
 // ============================================================
-// Lexer — State Machine
+// Lexer
 // ============================================================
 
-/**
- * State state machine yang harus dilacak:
- *
- * - pos               : offset byte saat ini
- * - indentStack       : level indentasi yang aktif
- * - bracketDepth      : kedalaman ( ) [ ] { }
- * - interpStack       : brace depth di dalam ${...}
- * - atLineStart       : apakah kita di awal baris logis
- * - trivia            : menyimpan trivia (comment, blank) bila preserveTrivia
- */
 export class Lexer {
   private readonly source: string;
   private readonly file: string;
@@ -389,8 +363,6 @@ export class Lexer {
   private bracketDepth = 0;
   private readonly interpStack: number[] = [];
   private atLineStart = true;
-
-  /** Untuk recovery: skip sampai baris baru. */
   private recovering = false;
 
   constructor(source: string, opts: LexerOptions) {
@@ -402,14 +374,6 @@ export class Lexer {
     this.sourceMap = new SourceMap(source);
   }
 
-  // ==========================================================
-  // Public API
-  // ==========================================================
-
-  /**
-   * Jalankan lexing sampai EOF. Hasilnya adalah TokenStream
-   * yang siap dikonsumsi parser.
-   */
   tokenize(): TokenStream {
     while (!this.isAtEnd()) {
       if (this.recovering) {
@@ -431,9 +395,6 @@ export class Lexer {
     return new TokenStream(this.tokens);
   }
 
-  /**
-   * Untuk tooling (formatter, LSP): kembalikan semua token termasuk trivia.
-   */
   tokenizeWithTrivia(): TokenStream {
     const lexerWithTrivia = new Lexer(this.source, {
       file: this.file,
@@ -445,7 +406,7 @@ export class Lexer {
   }
 
   // ==========================================================
-  // Line Start & Indentation
+  // Line Start
   // ==========================================================
 
   private handleLineStart(): void {
@@ -458,7 +419,6 @@ export class Lexer {
         spaces++;
       }
 
-      // Tab di awal baris = error
       if (this.peek() === "\t") {
         const startPos = this.sourceMap.position(lineStartOffset);
         const endPos = this.sourceMap.position(this.pos + 1);
@@ -478,7 +438,6 @@ export class Lexer {
 
       const c = this.peek();
 
-      // Baris kosong
       if (c === "\n" || c === "\r") {
         this.consumeNewline();
         if (this.preserveTrivia) {
@@ -487,13 +446,11 @@ export class Lexer {
         continue;
       }
 
-      // Baris komentar saja
       if (c === "#") {
         this.readComment();
         continue;
       }
 
-      // Baris dengan konten — terapkan indentasi
       if (this.bracketDepth === 0 && this.interpStack.length === 0) {
         this.applyIndent(spaces, lineStartOffset);
       }
@@ -538,11 +495,10 @@ export class Lexer {
   }
 
   // ==========================================================
-  // Token Scanner — Dispatch
+  // Scanner
   // ==========================================================
 
   private scanToken(): void {
-    // Skip whitespace horizontal
     while (this.peek() === " " || this.peek() === "\t") this.advance();
 
     if (this.isAtEnd()) return;
@@ -567,13 +523,11 @@ export class Lexer {
         break;
     }
 
-    // `#` bukan identifier — handle terpisah
     if (c === "#") {
       this.readComment();
       return;
     }
 
-    // Operator / punctuation
     this.readOperator();
   }
 
@@ -589,15 +543,10 @@ export class Lexer {
     }
   }
 
-  // ==========================================================
-  // Comment
-  // ==========================================================
-
   private readComment(): void {
     const startOffset = this.pos;
     const isDoc = this.peekAt(1) === "#";
 
-    // Konsumsi sampai newline (tidak termasuk)
     while (!this.isAtEnd() && this.peek() !== "\n" && this.peek() !== "\r") {
       this.advance();
     }
@@ -611,7 +560,6 @@ export class Lexer {
       this.emitToken(isDoc ? "DOC_COMMENT" : "COMMENT", body, start, end);
     }
 
-    // Konsumsi newline setelah komentar
     if (!this.isAtEnd()) {
       this.consumeNewline();
       if (this.bracketDepth === 0 && this.interpStack.length === 0) {
@@ -623,20 +571,15 @@ export class Lexer {
     }
   }
 
-  // ==========================================================
-  // Identifier & Keyword
-  // ==========================================================
-
   private readIdentifierOrKeyword(): void {
     const startOffset = this.pos;
 
-    // Cek raw string prefix: r"..." atau r'...'
     if (
       this.peek() === "r" &&
       (this.peekAt(1) === '"' || this.peekAt(1) === "'")
     ) {
-      this.advance(); // r
-      this.readString(/* raw */ true);
+      this.advance();
+      this.readString(true);
       return;
     }
 
@@ -663,14 +606,9 @@ export class Lexer {
     }
   }
 
-  // ==========================================================
-  // Number
-  // ==========================================================
-
   private readNumber(): void {
     const startOffset = this.pos;
 
-    // Hex / Bin / Oct
     if (this.peek() === "0") {
       const next = this.peekAt(1);
       if (next === "x" || next === "X") return this.readRadix(16, startOffset, /[0-9a-fA-F_]/);
@@ -678,16 +616,13 @@ export class Lexer {
       if (next === "o" || next === "O") return this.readRadix(8, startOffset, /[0-7_]/);
     }
 
-    // Decimal
     while (this.isDigit(this.peek()) || this.peek() === "_") this.advance();
 
-    // Float
     if (this.peek() === "." && this.isDigit(this.peekAt(1))) {
       this.advance();
       while (this.isDigit(this.peek()) || this.peek() === "_") this.advance();
     }
 
-    // Exponent
     const e = this.peek();
     if (e === "e" || e === "E") {
       const after = this.peekAt(1);
@@ -709,8 +644,8 @@ export class Lexer {
     startOffset: number,
     pattern: RegExp,
   ): void {
-    this.advance(); // 0
-    this.advance(); // x/b/o
+    this.advance();
+    this.advance();
     while (pattern.test(this.peek())) this.advance();
     this.finishNumber(startOffset, radix);
   }
@@ -740,13 +675,12 @@ export class Lexer {
   }
 
   // ==========================================================
-  // String — Normal, Raw, Multi-line, Interpolated
+  // String
   // ==========================================================
 
   private readString(isRaw = false): void {
     const startOffset = this.pos;
 
-    // Multi-line string """..."""
     if (
       !isRaw &&
       (this.peek() === '"' || this.peek() === "'") &&
@@ -757,7 +691,7 @@ export class Lexer {
     }
 
     const quote = this.peek()!;
-    this.advance(); // buang quote
+    this.advance();
 
     let buffer = "";
     let hasInterp = false;
@@ -765,7 +699,6 @@ export class Lexer {
     while (!this.isAtEnd()) {
       const c = this.peek();
 
-      // Akhir string
       if (c === quote) {
         this.advance();
         const start = this.sourceMap.position(startOffset);
@@ -782,10 +715,9 @@ export class Lexer {
         return;
       }
 
-      // Interpolasi
       if (!isRaw && c === "$" && this.peekAt(1) === "{") {
-        this.advance(); // $
-        this.advance(); // {
+        this.advance();
+        this.advance();
         const start = this.sourceMap.position(startOffset);
         const end = this.sourceMap.position(this.pos);
         const raw = this.source.slice(startOffset, this.pos);
@@ -800,7 +732,6 @@ export class Lexer {
         return;
       }
 
-      // Escape
       if (!isRaw && c === "\\") {
         this.advance();
         const esc = this.peek();
@@ -813,7 +744,6 @@ export class Lexer {
         continue;
       }
 
-      // Newline di dalam string biasa = error
       if (!isRaw && (c === "\n" || c === "\r")) {
         const start = this.sourceMap.position(startOffset);
         const end = this.sourceMap.position(this.pos);
@@ -835,7 +765,6 @@ export class Lexer {
       this.advance();
     }
 
-    // EOF tanpa penutup
     const start = this.sourceMap.position(startOffset);
     const end = this.sourceMap.position(this.pos);
     this.reporter.report({
@@ -848,14 +777,13 @@ export class Lexer {
 
   private readMultilineString(quote: string): void {
     const startOffset = this.pos;
-    this.advance(); this.advance(); this.advance(); // buang """
+    this.advance(); this.advance(); this.advance();
 
     let buffer = "";
 
     while (!this.isAtEnd()) {
       const c = this.peek();
 
-      // Akhir """
       if (
         c === quote &&
         this.peekAt(1) === quote &&
@@ -869,7 +797,6 @@ export class Lexer {
         return;
       }
 
-      // Escape
       if (c === "\\") {
         this.advance();
         const decoded = this.decodeEscape(this.peek(), startOffset);
@@ -892,9 +819,6 @@ export class Lexer {
     });
   }
 
-  /**
-   * Proses escape sequence. Return null kalau error (sudah di-report).
-   */
   private decodeEscape(esc: string, stringStartOffset: number): string | null {
     switch (esc) {
       case "n": this.advance(); return "\n";
@@ -936,9 +860,6 @@ export class Lexer {
     }
   }
 
-  /**
-   * Lanjutkan string setelah `${...}` ditutup.
-   */
   private readStringContinuation(): void {
     const startOffset = this.pos;
     let buffer = "";
@@ -946,7 +867,6 @@ export class Lexer {
     while (!this.isAtEnd()) {
       const c = this.peek();
 
-      // Quote penutup
       if (c === '"' || c === "'") {
         this.advance();
         const start = this.sourceMap.position(startOffset);
@@ -956,7 +876,6 @@ export class Lexer {
         return;
       }
 
-      // Interpolasi lanjutan
       if (c === "$" && this.peekAt(1) === "{") {
         this.advance(); this.advance();
         const start = this.sourceMap.position(startOffset);
@@ -967,7 +886,6 @@ export class Lexer {
         return;
       }
 
-      // Escape
       if (c === "\\") {
         this.advance();
         const decoded = this.decodeEscape(this.peek(), startOffset);
@@ -995,7 +913,7 @@ export class Lexer {
   }
 
   // ==========================================================
-  // Operators & Punctuation
+  // Operators
   // ==========================================================
 
   private readOperator(): void {
@@ -1012,7 +930,6 @@ export class Lexer {
       case "]": if (this.bracketDepth > 0) this.bracketDepth--; kind = "RBRACKET"; break;
       case "{": this.bracketDepth++; kind = "LBRACE"; break;
       case "}": {
-        // Cek apakah menutup interpolation
         if (this.interpStack.length > 0) {
           const top = this.interpStack[this.interpStack.length - 1]!;
           if (top === 0) {
@@ -1119,7 +1036,7 @@ export class Lexer {
   }
 
   // ==========================================================
-  // Final Tokens
+  // Final
   // ==========================================================
 
   private emitFinal(): void {
@@ -1162,6 +1079,7 @@ export class Lexer {
     }
     if (!this.isAtEnd()) this.consumeNewline();
     this.atLineStart = true;
+    this.interpStack.length = 0;
   }
 
   private errorAt(
@@ -1183,7 +1101,7 @@ export class Lexer {
   }
 
   // ==========================================================
-  // Navigation Primitives
+  // Navigation
   // ==========================================================
 
   private isAtEnd(): boolean {
@@ -1215,7 +1133,7 @@ export class Lexer {
   }
 
   // ==========================================================
-  // Token Emit
+  // Emit
   // ==========================================================
 
   private emitToken(
@@ -1233,10 +1151,6 @@ export class Lexer {
     });
   }
 
-  /**
-   * Emit token sintetis yang tidak punya teks di source
-   * (INDENT, DEDENT, NEWLINE otomatis, EOF).
-   */
   private emitSynthetic(kind: TokenKind, pos: Position): void {
     this.tokens.push({
       kind,
@@ -1262,9 +1176,6 @@ export class Lexer {
 // Convenience
 // ============================================================
 
-/**
- * Entry point ringkas: lex source jadi TokenStream.
- */
 export function lex(
   source: string,
   file: string,

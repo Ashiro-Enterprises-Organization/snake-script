@@ -22,13 +22,13 @@
 export type Severity = "error" | "warning" | "info" | "hint";
 
 // ============================================================
-// Location (re-export dari ast.ts untuk kenyamanan)
+// Location
 // ============================================================
 
 export interface Position {
   readonly offset: number;
-  readonly line: number;   // 1-based
-  readonly column: number; // 1-based
+  readonly line: number;
+  readonly column: number;
 }
 
 export interface Location {
@@ -43,8 +43,8 @@ export interface Location {
 
 export interface Diagnostic {
   readonly severity: Severity;
-  readonly code: string;          // "SS1001"
-  readonly message: string;       // "type mismatch"
+  readonly code: string;
+  readonly message: string;
   readonly location: Location;
   readonly notes?: readonly string[];
   readonly helps?: readonly string[];
@@ -53,15 +53,6 @@ export interface Diagnostic {
 // ============================================================
 // Kode Error
 // ============================================================
-//
-// Format: SSxxxx
-//   SS1xxx — Semantik / tipe
-//   SS2xxx — Sintaks / leksikal
-//   SS3xxx — Keamanan (null, mutability)
-//   SS4xxx — Runtime
-//   SS5xxx — Modul
-//   SS9xxx — Internal
-//
 
 export const ErrorCode = {
   // --- Tipe (1001-1099) ---
@@ -170,10 +161,6 @@ export function info(
 // Warna ANSI
 // ============================================================
 
-/**
- * Kode ANSI untuk pewarnaan terminal.
- * Dipakai kalau output tidak di-pipe ke file dan `--no-color` tidak aktif.
- */
 const ANSI = {
   reset:   "\x1b[0m",
   bold:    "\x1b[1m",
@@ -200,10 +187,6 @@ export interface ReporterOptions {
 // Source Cache
 // ============================================================
 
-/**
- * Cache isi file source. Reporter butuh ini untuk menampilkan
- * baris yang error.
- */
 const sourceCache = new Map<string, string[]>();
 
 export function loadSource(file: string, content: string): void {
@@ -243,35 +226,14 @@ function formatSeverity(sev: Severity, c: Colorizer): string {
   }
 }
 
-/**
- * Hitung lebar maksimum nomor baris yang akan ditampilkan.
- * Ini untuk alignment gutter — supaya `3 |` sejajar dengan `12 |`.
- */
 function gutterWidth(line: number): number {
   return String(line).length;
 }
 
-/**
- * Buat string padding supaya semua baris sejajar.
- */
 function pad(num: number, width: number): string {
   return String(num).padStart(width, " ");
 }
 
-/**
- * Format satu diagnostic jadi teks pretty.
- *
- * Contoh output:
- *
- *   error[SS1001]: type mismatch
- *     --> contoh.snake:3:18
- *      |
- *    3 | const x: Angka = "halo"
- *      |                  ^^^^^^ expected `Angka`, found `Teks`
- *      |
- *      = note: tipe literal `Teks` tidak dapat diberikan ke `Angka`
- *      = help: gunakan `Angka("...")` untuk konversi eksplisit
- */
 function formatPretty(diag: Diagnostic, opts: ReporterOptions): string {
   const c = makeColorizer(opts.color);
   const lines: string[] = [];
@@ -284,7 +246,6 @@ function formatPretty(diag: Diagnostic, opts: ReporterOptions): string {
   const locStr = `${file}:${start.line}:${start.column}`;
   lines.push(`  ${c("-->", ANSI.blue)} ${c(locStr, ANSI.dim)}`);
 
-  // Gutter
   const lineNo = start.line;
   const gw = gutterWidth(lineNo);
   const gutter = c(" ".repeat(gw) + " |", ANSI.blue);
@@ -297,9 +258,6 @@ function formatPretty(diag: Diagnostic, opts: ReporterOptions): string {
     const src = c(sourceLine, ANSI.reset);
     lines.push(`${c(pad(lineNo, gw), ANSI.blue)} ${bar.slice(gw + 1)} ${src}`);
 
-    // Garis panah
-    // start.column dan end.column adalah 1-based
-    // Untuk single-line diagnostic, hitung panjang caret
     const startCol = start.column;
     const endCol = start.line === end.line ? end.column : sourceLine.length + 1;
     const caretLen = Math.max(1, endCol - startCol);
@@ -311,7 +269,6 @@ function formatPretty(diag: Diagnostic, opts: ReporterOptions): string {
     lines.push(`${" ".repeat(gw)} ${bar.slice(gw + 1)} ${arrowLine}`);
   }
 
-  // Notes
   if (diag.notes && diag.notes.length > 0) {
     lines.push(`${" ".repeat(gw)} ${c("=", ANSI.blue)}`);
     for (const note of diag.notes) {
@@ -319,7 +276,6 @@ function formatPretty(diag: Diagnostic, opts: ReporterOptions): string {
     }
   }
 
-  // Helps
   if (diag.helps && diag.helps.length > 0) {
     for (const help of diag.helps) {
       lines.push(`${" ".repeat(gw)} ${c("=", ANSI.blue)} ${c("help:", ANSI.bold, ANSI.green)} ${help}`);
@@ -333,10 +289,6 @@ function formatPretty(diag: Diagnostic, opts: ReporterOptions): string {
 // Formatter — Plain
 // ============================================================
 
-/**
- * Format polos tanpa warna dan tanpa snippet. Untuk log file,
- * CI yang tidak mendukung ANSI, atau redirect ke file.
- */
 function formatPlain(diag: Diagnostic): string {
   const { start, file } = diag.location;
   const loc = `${file}:${start.line}:${start.column}`;
@@ -347,9 +299,6 @@ function formatPlain(diag: Diagnostic): string {
 // Formatter — JSON
 // ============================================================
 
-/**
- * Format JSON untuk konsumsi editor/LSP/tooling.
- */
 function formatJson(diag: Diagnostic): string {
   return JSON.stringify({
     severity: diag.severity,
@@ -382,35 +331,23 @@ export class Reporter {
 
   constructor(opts: Partial<ReporterOptions> = {}) {
     this.opts = {
-      color: opts.color ?? process.stdout.isTTY ?? false,
+      color: opts.color ?? (process.stdout.isTTY ?? false),
       format: opts.format ?? "pretty",
     };
   }
 
-  /**
-   * Tambah diagnostic ke daftar.
-   */
   report(diag: Diagnostic): void {
     this.diagnostics.push(diag);
   }
 
-  /**
-   * Cek apakah ada error (bukan warning/info).
-   */
   hasErrors(): boolean {
     return this.diagnostics.some((d) => d.severity === "error");
   }
 
-  /**
-   * Jumlah total diagnostic.
-   */
   count(): number {
     return this.diagnostics.length;
   }
 
-  /**
-   * Ringkasan per severity.
-   */
   summary(): ReportSummary {
     let errors = 0, warnings = 0, infos = 0, hints = 0;
     for (const d of this.diagnostics) {
@@ -424,23 +361,14 @@ export class Reporter {
     return { errors, warnings, infos, hints };
   }
 
-  /**
-   * Dapatkan semua diagnostic (readonly).
-   */
   all(): readonly Diagnostic[] {
     return this.diagnostics;
   }
 
-  /**
-   * Bersihkan semua diagnostic.
-   */
   clear(): void {
     this.diagnostics.length = 0;
   }
 
-  /**
-   * Format semua diagnostic ke string. Tidak print.
-   */
   format(): string {
     if (this.diagnostics.length === 0) return "";
 
@@ -456,10 +384,6 @@ export class Reporter {
     }
   }
 
-  /**
-   * Print semua diagnostic ke stderr, plus ringkasan.
-   * Return true kalau ada error (untuk exit code).
-   */
   flush(): boolean {
     if (this.diagnostics.length === 0) return false;
 
@@ -487,16 +411,15 @@ export class Reporter {
 }
 
 // ============================================================
-// Internal Error (untuk bug di compiler sendiri)
+// Internal Error
 // ============================================================
 
-/**
- * Exception yang dilempar saat ada invariant yang dilanggar
- * di kode compiler itu sendiri. Ini bug, bukan kesalahan user.
- */
 export class InternalError extends Error {
-  constructor(message: string, public readonly context?: string) {
+  readonly context?: string;
+
+  constructor(message: string, context?: string) {
     super(`[SS9001] Internal error: ${message}${context ? ` (${context})` : ""}`);
     this.name = "InternalError";
+    this.context = context;
   }
 }

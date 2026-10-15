@@ -1,0 +1,354 @@
+# ============================================================
+# Snake Script — Tour
+# ============================================================
+
+tulis("═══════════════════════════════════════")
+tulis("  Snake Script — Tour Bahasa")
+tulis("═══════════════════════════════════════")
+tulis("")
+
+
+# ============================================================
+# 1. Variabel
+# ============================================================
+
+tulis("[1] Variabel")
+
+const nama = "dunia"
+let hitungan = 0
+
+tulis("  const nama = ${nama}")
+tulis("  let hitungan = ${hitungan}")
+
+hitungan = 5
+hitungan += 3
+hitungan -= 1
+
+tulis("  setelah operasi: ${hitungan}")
+tulis("")
+
+
+# ============================================================
+# 2. Aritmatika
+# ============================================================
+
+tulis("[2] Aritmatika")
+
+tulis("  2 + 3   = ${2 + 3}")
+tulis("  10 - 4  = ${10 - 4}")
+tulis("  3 * 4   = ${3 * 4}")
+tulis("  10 / 4  = ${10 / 4}")
+tulis("  10 % 3  = ${10 % 3}")
+tulis("  2 ** 10 = ${2 ** 10}")
+tulis("  2 + 3 * 4 = ${2 + 3 * 4}")
+tulis("  (2 + 3) * 4 = ${(2 + 3) * 4}")
+tulis("")
+
+
+# ============================================================
+# 3. Perbandingan & Logika
+# ============================================================
+
+tulis("[3] Perbandingan & Logika")
+
+tulis("  5 > 3       = ${5 > 3}")
+tulis("  5 == 5      = ${5 == 5}")
+tulis("  5 != 3      = ${5 != 3}")
+tulis("  true and false = ${true and false}")
+tulis("  true or false  = ${true or false}")
+tulis("  not true       = ${not true}")
+tulis("")
+
+
+# ============================================================
+# 4. Kondisi
+# ============================================================
+
+tulis("[4] Kondisi")
+
+const nilai = 75
+
+if nilai >= 90:
+    tulis("  Nilai: A")
+elif nilai >= 80:
+    tulis("  Nilai: B")
+elif nilai >= 70:
+    tulis("  Nilai: C")
+else:
+    tulis("  Nilai: D")
+tulis("")
+
+
+# ============================================================
+# 5. Loop
+# ============================================================
+
+tulis("[5] Loop")
+
+tulis("  While:")
+let i = 0
+while i < 3:
+    tulis("    i = ${i}")
+    i += 1
+
+tulis("  For over range:")
+for j in 0..5:
+    tulis("    j = ${j}")
+
+tulis("  For over list:")
+for x in [10, 20, 30]:
+    tulis("    x = ${x}")
+
+tulis("  Break & continue:")
+for k in 0..10:
+    if k == 3:
+        continue
+    if k == 7:
+        break
+    tulis("    k = ${k}")
+tulis("")
+
+
+# ============================================================
+# 6. Fungsi
+# ============================================================
+
+tulis("[6] Fungsi")
+
+fn tambah(a: Angka, b: Angka) -> Angka:
+    return a + b
+
+tulis("  tambah(3, 4) = ${tambah(3, 4)}")
+
+fn faktorial(n: Angka) -> Angka:
+    if n <= 1:
+        return 1
+    return n * faktorial(n - 1)
+
+tulis("  faktorial(5) = ${faktorial(5)}")
+tulis("  faktorial(10) = ${faktorial(10)}")
+
+fn fibonacci(n: Angka) -> Angka:
+    if n <= 1:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
+
+tulis("  fibonacci(10) = ${fibonacci(10)}")
+tulis("")
+
+
+# ============================================================
+# 7. Closure & Higher-Order
+# ============================================================
+
+tulis("[7] Closure & Higher-Order Function")
+
+fn buatPengali(faktor: Angka) -> (Angka) -> Angka:
+    return fn(x: Angka) -> Angka => x * faktor
+
+const kali2 = buatPengali(2)
+const kali10 = buatPengali(10)
+
+tulis("  kali2(5) = ${kali2(5)}")
+tulis("  kali10(5) = ${kali10(5)}")
+
+fn petakan(xs: Daftar<Angka>, f: (Angka) -> Angka) -> Daftar<Angka>:
+    let hasil = []
+    for x in xs:
+        hasil = hasil + [f(x)]
+    return hasil
+
+const digandakan = petakan([1, 2, 3, 4], kali2)
+tulis("  petakan([1,2,3,4], kali2) = ${digandakan}")
+tulis("")
+
+
+# ============================================================
+# 8. Daftar & Peta
+# ============================================================
+
+tulis("[8] Daftar & Peta")
+
+const angka = [10, 20, 30, 40, 50]
+
+tulis("  daftar: ${angka}")
+tulis("  panjang: ${panjang(angka)}")
+tulis("  index 0: ${angka[0]}")
+tulis("  index 4: ${angka[4]}")
+
+let mutable = [1, 2, 3]
+mutable[0] = 100
+tulis("  setelah mutable[0] = 100: ${mutable}")
+
+const umur = { "budi": 20, "ani": 22, "cici": 19 }
+tulis("  umur[budi] = ${umur['budi']}")
+tulis("  umur[ani]  = ${umur['ani']}")
+tulis("")
+
+
+# ============================================================
+# 9. Match
+# ============================================================
+
+tulis("[9] Match")
+
+fn klasifikasi(n: Angka) -> Teks:
+    match n:
+        case 0:
+            return "nol"
+        case 1 | 2 | 3:
+            return "kecil"
+        case _:
+            return "besar"
+
+for n in [0, 2, 5, 100]:
+    tulis("  klasifikasi(${n}) = ${klasifikasi(n)}")
+tulis("")
+
+
+# ============================================================
+# 10. Error Handling
+# ============================================================
+
+tulis("[10] Error Handling")
+
+fn bagi(a: Angka, b: Angka) -> Angka:
+    if b == 0:
+        throw Error("tidak bisa bagi dengan nol")
+    return a / b
+
+try:
+    tulis("  bagi(10, 2) = ${bagi(10, 2)}")
+    tulis("  bagi(10, 0) = ${bagi(10, 0)}")
+catch err:
+    tulis("  Error tertangkap: ${err.message}")
+finally:
+    tulis("  Blok finally selalu jalan")
+tulis("")
+
+
+# ============================================================
+# 11. String
+# ============================================================
+
+tulis("[11] String")
+
+const s = "Halo, dunia!"
+tulis("  string: ${s}")
+tulis("  panjang: ${panjang(s)}")
+tulis("  karakter pertama: ${s[0]}")
+tulis("  karakter terakhir: ${s[panjang(s) - 1]}")
+
+const nama2 = "Snake"
+const umur2 = 1
+tulis("  interpolasi: ${nama2} berumur ${umur2} tahun")
+tulis("")
+
+
+# ============================================================
+# 12. Konversi Tipe
+# ============================================================
+
+tulis("[12] Konversi Tipe")
+
+const angkaStr = "42"
+const angkaNum = Angka(angkaStr)
+tulis("  Angka(angkaStr) = ${angkaNum}")
+tulis("  angkaNum + 8 = ${angkaNum + 8}")
+
+const numStr = Teks(123)
+tulis("  Teks(123) = ${numStr}")
+
+tulis("  tipe(42) = ${tipe(42)}")
+tulis("  tipe(x) = ${tipe(s)}")
+tulis("  tipe(true) = ${tipe(true)}")
+tulis("  tipe([1]) = ${tipe([1])}")
+tulis("  tipe(null) = ${tipe(null)}")
+tulis("")
+
+
+# ============================================================
+# 13. Algoritma — Bubble Sort
+# ============================================================
+
+tulis("[13] Algoritma — Bubble Sort")
+
+fn urutkan(xs: Daftar<Angka>) -> Daftar<Angka>:
+    let salinan = []
+    for x in xs:
+        salinan = salinan + [x]
+
+    const n = panjang(salinan)
+    let i = 0
+    while i < n:
+        let j = 0
+        while j < n - i - 1:
+            if salinan[j] > salinan[j + 1]:
+                const t = salinan[j]
+                salinan[j] = salinan[j + 1]
+                salinan[j + 1] = t
+            j += 1
+        i += 1
+    return salinan
+
+const belum = [5, 2, 8, 1, 9, 3]
+const sudah = urutkan(belum)
+tulis("  sebelum: ${belum}")
+tulis("  sesudah: ${sudah}")
+tulis("")
+
+
+# ============================================================
+# 14. FizzBuzz
+# ============================================================
+
+tulis("[14] FizzBuzz")
+
+for n in 1..16:
+    if n % 15 == 0:
+        tulis("  FizzBuzz")
+    elif n % 3 == 0:
+        tulis("  Fizz")
+    elif n % 5 == 0:
+        tulis("  Buzz")
+    else:
+        tulis("  ${n}")
+tulis("")
+
+
+# ============================================================
+# 15. Bilangan Prima
+# ============================================================
+
+tulis("[15] Bilangan Prima")
+
+fn prima(n: Angka) -> Boolean:
+    if n < 2:
+        return false
+    if n == 2:
+        return true
+    if n % 2 == 0:
+        return false
+    let i = 3
+    while i * i <= n:
+        if n % i == 0:
+            return false
+        i += 2
+    return true
+
+let primaList = []
+for n in 2..30:
+    if prima(n):
+        primaList = primaList + [n]
+tulis("  prima < 30: ${primaList}")
+tulis("")
+
+
+# ============================================================
+# Selesai
+# ============================================================
+
+tulis("═══════════════════════════════════════")
+tulis("  Tour selesai.")
+tulis("  Snake Script v0.1.0")
+tulis("═══════════════════════════════════════")
