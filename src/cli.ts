@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Snake Script — CLI
+ * Snake Script — CLI (Premium Edition)
+ *
+ * Desain: profesional, modern, dengan box drawing.
+ * Width menyesuaikan terminal — aman di HP maupun desktop.
  */
 
 import * as fs from "node:fs";
@@ -20,6 +23,7 @@ import { Reporter, clearSourceCache } from "./diagnostics.ts";
 const VERSION = "0.1.0";
 const BIN_NAME = "snake";
 const TAGLINE = "Kemudahan Python. Keamanan TypeScript.";
+const HOMEPAGE = "https://github.com/Ashiro-Enterprises-Organization/snake-script";
 
 // ============================================================
 // Exit Codes
@@ -32,22 +36,103 @@ const EXIT_FILE_NOT_FOUND = 3;
 const EXIT_USAGE = 64;
 
 // ============================================================
-// ANSI Colors
+// Terminal Width
+// ============================================================
+
+function termWidth(): number {
+  const w = process.stdout.columns || 80;
+  // Min 40, max 72 — supaya tidak terlalu lebar di HP atau desktop
+  return Math.max(40, Math.min(72, w - 4));
+}
+
+// ============================================================
+// Color Palette
 // ============================================================
 
 const useColor =
-  process.stdout.isTTY && !process.env.NO_COLOR && !process.argv.includes("--no-color");
+  process.stdout.isTTY &&
+  !process.env.NO_COLOR &&
+  !process.argv.includes("--no-color");
 
-const c = {
-  reset: useColor ? "\x1b[0m" : "",
-  bold: useColor ? "\x1b[1m" : "",
-  dim: useColor ? "\x1b[2m" : "",
-  red: useColor ? "\x1b[31m" : "",
-  green: useColor ? "\x1b[32m" : "",
-  yellow: useColor ? "\x1b[33m" : "",
-  blue: useColor ? "\x1b[34m" : "",
-  cyan: useColor ? "\x1b[36m" : "",
-};
+const C = {
+  reset:   useColor ? "\x1b[0m"  : "",
+  bold:    useColor ? "\x1b[1m"  : "",
+  dim:     useColor ? "\x1b[2m"  : "",
+  italic:  useColor ? "\x1b[3m"  : "",
+
+  // Foreground
+  black:   useColor ? "\x1b[30m" : "",
+  red:     useColor ? "\x1b[31m" : "",
+  green:   useColor ? "\x1b[32m" : "",
+  yellow:  useColor ? "\x1b[33m" : "",
+  blue:    useColor ? "\x1b[34m" : "",
+  magenta: useColor ? "\x1b[35m" : "",
+  cyan:    useColor ? "\x1b[36m" : "",
+  white:   useColor ? "\x1b[37m" : "",
+  gray:    useColor ? "\x1b[90m" : "",
+
+  // Bright
+  brightRed:     useColor ? "\x1b[91m" : "",
+  brightGreen:   useColor ? "\x1b[92m" : "",
+  brightYellow:  useColor ? "\x1b[93m" : "",
+  brightBlue:    useColor ? "\x1b[94m" : "",
+  brightMagenta: useColor ? "\x1b[95m" : "",
+  brightCyan:    useColor ? "\x1b[96m" : "",
+
+  // Background
+  bgBlue:   useColor ? "\x1b[44m"  : "",
+  bgCyan:   useColor ? "\x1b[46m"  : "",
+} as const;
+
+// ============================================================
+// Box Drawing
+// ============================================================
+
+const B = {
+  tl: "╭", tr: "╮", bl: "╰", br: "╯",
+  h: "─",  v: "│",
+  lt: "├", rt: "┤", tt: "┬", bt: "┴", cross: "┼",
+} as const;
+
+/**
+ * Bikin garis horizontal dengan lebar tertentu.
+ */
+function hline(width: number): string {
+  return B.h.repeat(Math.max(0, width));
+}
+
+/**
+ * Center text dalam lebar tertentu.
+ */
+function center(text: string, width: number): string {
+  const visible = stripAnsi(text).length;
+  if (visible >= width) return text;
+  const left = Math.floor((width - visible) / 2);
+  const right = width - visible - left;
+  return " ".repeat(left) + text + " ".repeat(right);
+}
+
+/**
+ * Pad text ke kanan.
+ */
+function padRight(text: string, width: number): string {
+  const visible = stripAnsi(text).length;
+  if (visible >= width) return text;
+  return text + " ".repeat(width - visible);
+}
+
+/**
+ * Pad text ke kiri.
+ */
+function padLeft(text: string, width: number): string {
+  const visible = stripAnsi(text).length;
+  if (visible >= width) return text;
+  return " ".repeat(width - visible) + text;
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
 
 // ============================================================
 // Main Entry
@@ -62,7 +147,7 @@ function main(): void {
   }
 
   if (args.includes("-v") || args.includes("--version")) {
-    console.log(`${BIN_NAME} ${VERSION}`);
+    printVersion();
     process.exit(EXIT_OK);
   }
 
@@ -75,33 +160,179 @@ function main(): void {
   const rest = args.slice(1);
 
   switch (command) {
-    case "run":
-      cmdRun(rest);
-      break;
-    case "check":
-      cmdCheck(rest);
-      break;
-    case "repl":
-      cmdRepl(rest);
-      break;
+    case "run":         cmdRun(rest); break;
+    case "check":       cmdCheck(rest); break;
+    case "repl":        cmdRepl(rest); break;
     case "fmt":
-    case "format":
-      cmdFmt(rest);
-      break;
-    case "init":
-      cmdInit(rest);
-      break;
-    case "info":
-      cmdInfo();
-      break;
-    case "help":
-      printHelp();
-      break;
+    case "format":      cmdFmt(rest); break;
+    case "init":        cmdInit(rest); break;
+    case "info":        cmdInfo(); break;
+    case "help":        printHelp(); break;
     default:
-      console.error(`${c.red}error:${c.reset} perintah tidak dikenal: \`${command}\``);
-      console.error(`\nJalankan \`${BIN_NAME} --help\` untuk daftar perintah.`);
+      printUnknownCommand(command);
       process.exit(EXIT_USAGE);
   }
+}
+
+// ============================================================
+// Banner & Version
+// ============================================================
+
+function printVersion(): void {
+  console.log(`${C.bold}${BIN_NAME}${C.reset} ${C.cyan}${VERSION}${C.reset}`);
+}
+
+function printBanner(): void {
+  const w = termWidth();
+  const inner = w - 4;
+
+  console.log("");
+  console.log(`${C.cyan}${B.tl}${hline(inner + 2)}${B.tr}${C.reset}`);
+
+  // Baris 1: judul
+  const title = `${C.bold}${C.brightCyan}Snake Script${C.reset}`;
+  const titleVisible = "Snake Script";
+  const line1 = `  ${C.brightGreen}🐍${C.reset}  ${title}${" ".repeat(Math.max(0, inner - titleVisible.length - 5))}`;
+  console.log(`${C.cyan}${B.v}${C.reset}${line1}${C.cyan}${B.v}${C.reset}`);
+
+  // Baris 2: versi
+  const line2 = `      ${C.dim}v${VERSION}${C.reset}${" ".repeat(Math.max(0, inner - VERSION.length - 7))}`;
+  console.log(`${C.cyan}${B.v}${C.reset}${line2}${C.cyan}${B.v}${C.reset}`);
+
+  // Baris 3: kosong
+  console.log(`${C.cyan}${B.v}${C.reset}${" ".repeat(inner + 2)}${C.cyan}${B.v}${C.reset}`);
+
+  // Baris 4: tagline
+  const taglineLine = `  ${C.dim}${TAGLINE}${C.reset}${" ".repeat(Math.max(0, inner - TAGLINE.length - 2))}`;
+  console.log(`${C.cyan}${B.v}${C.reset}${taglineLine}${C.cyan}${B.v}${C.reset}`);
+
+  console.log(`${C.cyan}${B.bl}${hline(inner + 2)}${B.br}${C.reset}`);
+  console.log("");
+}
+
+// ============================================================
+// Help
+// ============================================================
+
+function printHelp(): void {
+  printBanner();
+
+  const w = termWidth();
+
+  // Section: Penggunaan
+  printSectionHeader("PENGGUNAAN");
+  console.log(`  ${C.bold}${BIN_NAME}${C.reset} ${C.dim}<perintah>${C.reset} ${C.dim}[opsi]${C.reset}`);
+  console.log("");
+
+  // Section: Perintah
+  printSectionHeader("PERINTAH");
+  printCommandRow("run", "<file>", "Jalankan program Snake Script");
+  printCommandRow("check", "<file>", "Periksa sintaks tanpa menjalankan");
+  printCommandRow("repl", "", "Mode interaktif");
+  printCommandRow("fmt", "<file>", "Rapikan format kode");
+  printCommandRow("init", "<nama>", "Buat proyek baru");
+  printCommandRow("info", "", "Info versi & lingkungan");
+  console.log("");
+
+  // Section: Opsi
+  printSectionHeader("OPSI");
+  printOptionRow("-h, --help", "Tampilkan bantuan ini");
+  printOptionRow("-v, --version", "Tampilkan versi");
+  printOptionRow("--no-color", "Matikan warna ANSI");
+  printOptionRow("-q, --quiet", "Mode senyap");
+  console.log("");
+
+  // Footer
+  console.log(`${C.dim}  Jalankan ${C.reset}${C.cyan}${BIN_NAME} <perintah> --help${C.reset}${C.dim} untuk info lebih lanjut.${C.reset}`);
+  console.log("");
+}
+
+function printSectionHeader(title: string): void {
+  console.log(`  ${C.bold}${C.blue}${title}${C.reset}`);
+}
+
+function printCommandRow(cmd: string, arg: string, desc: string): void {
+  const cmdCol = `  ${C.brightCyan}${BIN_NAME} ${C.bold}${C.white}${cmd}${C.reset}`;
+  const argCol = arg ? ` ${C.dim}${arg}${C.reset}` : "";
+  console.log(`${cmdCol}${argCol}`);
+  console.log(`      ${C.gray}${desc}${C.reset}`);
+}
+
+function printOptionRow(opt: string, desc: string): void {
+  console.log(`  ${C.brightYellow}${opt.padEnd(16)}${C.reset}${C.gray}${desc}${C.reset}`);
+}
+
+function printUnknownCommand(command: string): void {
+  console.log("");
+  printErrorBox(
+    "Perintah tidak dikenal",
+    `\`${command}\` bukan perintah yang valid.`,
+    [`Jalankan \`${BIN_NAME} --help\` untuk daftar perintah.`],
+  );
+  console.log("");
+}
+
+// ============================================================
+// Boxes
+// ============================================================
+
+interface BoxOptions {
+  title?: string;
+  titleColor?: string;
+  borderColor?: string;
+  width?: number;
+}
+
+function printBox(content: string[], opts: BoxOptions = {}): void {
+  const w = opts.width ?? termWidth();
+  const borderColor = opts.borderColor ?? C.cyan;
+  const inner = w - 2;
+
+  // Top border with optional title
+  if (opts.title) {
+    const titleColor = opts.titleColor ?? C.bold;
+    const title = `${titleColor} ${opts.title} ${C.reset}`;
+    const titleVisible = ` ${opts.title} `;
+    const leftBar = "─";
+    const rightBar = "─".repeat(Math.max(0, inner - titleVisible.length - 1));
+    console.log(`${borderColor}${B.tl}${leftBar}${C.reset}${title}${borderColor}${rightBar}${B.tr}${C.reset}`);
+  } else {
+    console.log(`${borderColor}${B.tl}${hline(inner)}${B.tr}${C.reset}`);
+  }
+
+  // Content
+  for (const line of content) {
+    const visible = stripAnsi(line).length;
+    const padding = Math.max(0, inner - visible - 2);
+    console.log(`${borderColor}${B.v}${C.reset} ${line}${" ".repeat(padding)} ${borderColor}${B.v}${C.reset}`);
+  }
+
+  // Bottom
+  console.log(`${borderColor}${B.bl}${hline(inner)}${B.br}${C.reset}`);
+}
+
+function printErrorBox(title: string, message: string, hints: string[] = []): void {
+  const w = termWidth();
+  const inner = w - 2;
+
+  console.log(`${C.red}${B.tl}─ ${C.bold}${title}${C.reset}${C.red} ${"─".repeat(Math.max(0, inner - title.length - 4))}${B.tr}${C.reset}`);
+  console.log(`${C.red}${B.v}${C.reset} ${message}${" ".repeat(Math.max(0, inner - stripAnsi(message).length - 2))} ${C.red}${B.v}${C.reset}`);
+
+  for (const hint of hints) {
+    console.log(`${C.red}${B.v}${C.reset} ${C.dim}${hint}${C.reset}${" ".repeat(Math.max(0, inner - stripAnsi(hint).length - 2))} ${C.red}${B.v}${C.reset}`);
+  }
+
+  console.log(`${C.red}${B.bl}${hline(inner)}${B.br}${C.reset}`);
+}
+
+function printSuccessBox(title: string, message: string): void {
+  const w = termWidth();
+  const inner = w - 2;
+  const check = `${C.brightGreen}✓${C.reset}`;
+
+  console.log(`${C.green}${B.tl}─${C.reset} ${check} ${C.bold}${title}${C.reset} ${C.green}${"─".repeat(Math.max(0, inner - title.length - 5))}${B.tr}${C.reset}`);
+  console.log(`${C.green}${B.v}${C.reset} ${message}${" ".repeat(Math.max(0, inner - stripAnsi(message).length - 2))} ${C.green}${B.v}${C.reset}`);
+  console.log(`${C.green}${B.bl}${hline(inner)}${B.br}${C.reset}`);
 }
 
 // ============================================================
@@ -109,18 +340,32 @@ function main(): void {
 // ============================================================
 
 function cmdRun(args: string[]): void {
+  if (args.includes("--help") || args.includes("-h")) {
+    printRunHelp();
+    process.exit(EXIT_OK);
+  }
+
   const { file, flags } = parseRunFlags(args);
 
   if (!file) {
-    console.error(`${c.red}error:${c.reset} perintah \`run\` butuh argumen <file>`);
-    console.error(`\nPenggunaan: ${BIN_NAME} run <file.snake>`);
+    printErrorBox(
+      "Argumen kurang",
+      "Perintah `run` butuh path ke file.",
+      [`Penggunaan: ${BIN_NAME} run <file.snake>`],
+    );
+    console.log("");
     process.exit(EXIT_USAGE);
   }
 
   const resolved = path.resolve(file);
 
   if (!fs.existsSync(resolved)) {
-    console.error(`${c.red}error:${c.reset} file tidak ditemukan: ${file}`);
+    printErrorBox(
+      "File tidak ditemukan",
+      file,
+      [`Path: ${resolved}`],
+    );
+    console.log("");
     process.exit(EXIT_FILE_NOT_FOUND);
   }
 
@@ -131,6 +376,12 @@ function cmdRun(args: string[]): void {
     format: flags.json ? "json" : "pretty",
   });
 
+  // Header panel
+  if (!flags.quiet && !flags.json) {
+    printRunHeader(resolved);
+  }
+
+  // Compile
   const lexer = new Lexer(source, { file: resolved, reporter });
   const stream = lexer.tokenize();
   const parser = new Parser(stream, { file: resolved, reporter });
@@ -143,10 +394,7 @@ function cmdRun(args: string[]): void {
 
   const parseTime = Date.now() - start;
 
-  if (!flags.quiet) {
-    console.error(`${c.dim}Menjalankan ${path.basename(resolved)}${c.reset}`);
-  }
-
+  // Execute
   const interpreter = new Interpreter({
     file: resolved,
     reporter,
@@ -166,7 +414,7 @@ function cmdRun(args: string[]): void {
       reporter.flush();
       process.exit(EXIT_RUNTIME_ERROR);
     }
-    console.error(`${c.red}internal error:${c.reset} ${(e as Error).message}`);
+    console.error(`${C.red}${C.bold}internal error:${C.reset} ${(e as Error).message}`);
     if (process.env.SNAKE_DEBUG) {
       console.error((e as Error).stack);
     }
@@ -178,14 +426,65 @@ function cmdRun(args: string[]): void {
     process.exit(EXIT_RUNTIME_ERROR);
   }
 
-  if (!flags.quiet && flags.time) {
+  if (!flags.quiet && !flags.json && flags.time) {
     const total = Date.now() - start;
-    console.error(
-      `${c.dim}Selesai dalam ${total}ms (parse ${parseTime}ms)${c.reset}`,
-    );
+    printRunFooter(total, parseTime);
   }
 
   process.exit(EXIT_OK);
+}
+
+function printRunHeader(file: string): void {
+  const w = termWidth();
+  const inner = w - 2;
+  const basename = path.basename(file);
+  const dir = path.dirname(file).replace(process.env.HOME ?? "", "~");
+
+  const label = `${C.bold}${C.brightCyan}▶${C.reset} ${C.bold}${basename}${C.reset}`;
+  const labelVisible = `▶ ${basename}`;
+  const padding = " ".repeat(Math.max(0, inner - labelVisible.length - 2));
+
+  console.log("");
+  console.log(`${C.cyan}${B.tl}${hline(inner)}${B.tr}${C.reset}`);
+  console.log(`${C.cyan}${B.v}${C.reset} ${label}${padding} ${C.cyan}${B.v}${C.reset}`);
+
+  const dirLine = `  ${C.dim}${dir}${C.reset}`;
+  const dirVisible = `  ${dir}`;
+  const dirPadding = " ".repeat(Math.max(0, inner - dirVisible.length - 2));
+  console.log(`${C.cyan}${B.v}${C.reset} ${dirLine}${dirPadding} ${C.cyan}${B.v}${C.reset}`);
+
+  console.log(`${C.cyan}${B.bl}${hline(inner)}${B.br}${C.reset}`);
+  console.log("");
+}
+
+function printRunFooter(totalMs: number, parseMs: number): void {
+  console.log("");
+  console.log(`  ${C.dim}${C.brightGreen}✓${C.reset} ${C.dim}Selesai dalam ${C.bold}${totalMs}ms${C.reset}${C.dim} (parse ${parseMs}ms)${C.reset}`);
+  console.log("");
+}
+
+function printRunHelp(): void {
+  printBanner();
+  printSectionHeader("PENGGUNAAN");
+  console.log(`  ${C.bold}${BIN_NAME} run${C.reset} ${C.dim}<file>${C.reset} ${C.dim}[opsi]${C.reset}`);
+  console.log("");
+  printSectionHeader("ARGUMEN");
+  printOptionRow("<file>", "Path ke file .snake");
+  console.log("");
+  printSectionHeader("OPSI");
+  printOptionRow("-w, --watch", "Pantau perubahan dan jalankan ulang");
+  printOptionRow("--json", "Output error dalam format JSON");
+  printOptionRow("--no-color", "Matikan warna ANSI");
+  printOptionRow("-q, --quiet", "Hanya tampilkan output program");
+  printOptionRow("--time", "Tampilkan waktu eksekusi");
+  printOptionRow("-h, --help", "Tampilkan bantuan");
+  console.log("");
+  printSectionHeader("EXIT CODE");
+  printOptionRow("0", "Sukses");
+  printOptionRow("1", "Error kompilasi");
+  printOptionRow("2", "Error runtime");
+  printOptionRow("3", "File tidak ditemukan");
+  console.log("");
 }
 
 interface RunFlags {
@@ -199,7 +498,7 @@ function parseRunFlags(args: string[]): { file: string | null; flags: RunFlags }
   const flags: RunFlags = {
     quiet: false,
     json: false,
-    time: false,
+    time: true, // default true untuk tampilkan footer
     watch: false,
   };
   let file: string | null = null;
@@ -208,6 +507,7 @@ function parseRunFlags(args: string[]): { file: string | null; flags: RunFlags }
     if (arg === "-q" || arg === "--quiet") flags.quiet = true;
     else if (arg === "--json") flags.json = true;
     else if (arg === "--time") flags.time = true;
+    else if (arg === "--no-time") flags.time = false;
     else if (arg === "-w" || arg === "--watch") flags.watch = true;
     else if (arg === "--no-color") { /* handled globally */ }
     else if (!arg.startsWith("-")) file = arg;
@@ -224,34 +524,47 @@ function cmdCheck(args: string[]): void {
   const file = args.find((a) => !a.startsWith("-"));
 
   if (!file) {
-    console.error(`${c.red}error:${c.reset} perintah \`check\` butuh argumen <file>`);
-    console.error(`\nPenggunaan: ${BIN_NAME} check <file.snake>`);
+    printErrorBox(
+      "Argumen kurang",
+      "Perintah `check` butuh path ke file.",
+      [`Penggunaan: ${BIN_NAME} check <file.snake>`],
+    );
+    console.log("");
     process.exit(EXIT_USAGE);
   }
 
   const resolved = path.resolve(file);
 
   if (!fs.existsSync(resolved)) {
-    console.error(`${c.red}error:${c.reset} file tidak ditemukan: ${file}`);
+    printErrorBox("File tidak ditemukan", file, [`Path: ${resolved}`]);
+    console.log("");
     process.exit(EXIT_FILE_NOT_FOUND);
   }
 
   const source = fs.readFileSync(resolved, "utf-8");
   const reporter = new Reporter({ color: useColor, format: "pretty" });
 
+  const start = Date.now();
+
   const lexer = new Lexer(source, { file: resolved, reporter });
   const stream = lexer.tokenize();
   const parser = new Parser(stream, { file: resolved, reporter });
   parser.parseProgram();
+
+  const elapsed = Date.now() - start;
 
   if (reporter.hasErrors()) {
     reporter.flush();
     process.exit(EXIT_COMPILE_ERROR);
   }
 
-  console.error(
-    `${c.green}ok${c.reset} ${path.basename(resolved)} — ${c.dim}tidak ada masalah${c.reset}`,
+  const basename = path.basename(resolved);
+  console.log("");
+  printSuccessBox(
+    "Check",
+    `${basename} — ${C.green}${C.bold}tidak ada masalah${C.reset} ${C.dim}(${elapsed}ms)${C.reset}`,
   );
+  console.log("");
   process.exit(EXIT_OK);
 }
 
@@ -260,14 +573,14 @@ function cmdCheck(args: string[]): void {
 // ============================================================
 
 function cmdRepl(_args: string[]): void {
-  console.error(`${c.bold}${BIN_NAME} ${VERSION}${c.reset} — ${TAGLINE}`);
-  console.error(`${c.dim}Ketik \`.keluar\` untuk keluar, \`.bantuan\` untuk bantuan.${c.reset}`);
-  console.error("");
+  printBanner();
+
+  console.log(`  ${C.dim}Ketik ${C.reset}${C.cyan}.bantuan${C.reset}${C.dim} untuk bantuan, ${C.reset}${C.cyan}.keluar${C.reset}${C.dim} untuk keluar.${C.reset}`);
+  console.log("");
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: `${c.green}>>>${c.reset} `,
     terminal: true,
   });
 
@@ -279,6 +592,10 @@ function cmdRepl(_args: string[]): void {
 
   let buffer = "";
 
+  const promptMain = `${C.brightGreen}🐍${C.reset} ${C.brightCyan}>>>${C.reset} `;
+  const promptCont = `${C.dim}...${C.reset} `;
+
+  rl.setPrompt(promptMain);
   rl.prompt();
 
   rl.on("line", (line) => {
@@ -291,17 +608,21 @@ function cmdRepl(_args: string[]): void {
 
     if (trimmed === ".bantuan" || trimmed === ".help") {
       printReplHelp();
+      rl.setPrompt(promptMain);
       rl.prompt();
       return;
     }
 
     if (trimmed === ".bersih" || trimmed === ".clear") {
       console.clear();
+      printBanner();
+      rl.setPrompt(promptMain);
       rl.prompt();
       return;
     }
 
     if (trimmed === "") {
+      rl.setPrompt(promptMain);
       rl.prompt();
       return;
     }
@@ -311,7 +632,7 @@ function cmdRepl(_args: string[]): void {
     const isIncomplete = endsWithBlockOpener(line);
 
     if (isIncomplete) {
-      rl.setPrompt(`${c.dim}...${c.reset} `);
+      rl.setPrompt(promptCont);
       rl.prompt();
       return;
     }
@@ -331,19 +652,21 @@ function cmdRepl(_args: string[]): void {
       }
     } catch (e) {
       if (e instanceof RuntimeError) {
-        console.error(`${c.red}error:${c.reset} ${e.value.message}`);
+        console.error(`  ${C.red}✖${C.reset} ${C.red}${e.value.message}${C.reset}`);
       } else {
-        console.error(`${c.red}error:${c.reset} ${(e as Error).message}`);
+        console.error(`  ${C.red}✖${C.reset} ${C.red}${(e as Error).message}${C.reset}`);
       }
     }
 
     buffer = "";
-    rl.setPrompt(`${c.green}>>>${c.reset} `);
+    rl.setPrompt(promptMain);
     rl.prompt();
   });
 
   rl.on("close", () => {
-    console.error("");
+    console.log("");
+    console.log(`  ${C.dim}Sampai jumpa.${C.reset}`);
+    console.log("");
     process.exit(EXIT_OK);
   });
 }
@@ -354,11 +677,12 @@ function endsWithBlockOpener(line: string): boolean {
 }
 
 function printReplHelp(): void {
-  console.error(`${c.bold}Perintah REPL:${c.reset}`);
-  console.error(`  .bantuan, .help    Tampilkan bantuan ini`);
-  console.error(`  .bersih, .clear    Bersihkan layar`);
-  console.error(`  .keluar, .exit     Keluar dari REPL`);
-  console.error("");
+  console.log("");
+  printSectionHeader("PERINTAH REPL");
+  printOptionRow(".bantuan, .help", "Tampilkan bantuan");
+  printOptionRow(".bersih, .clear", "Bersihkan layar");
+  printOptionRow(".keluar, .exit", "Keluar dari REPL");
+  console.log("");
 }
 
 // ============================================================
@@ -369,13 +693,21 @@ function cmdFmt(args: string[]): void {
   const file = args.find((a) => !a.startsWith("-"));
 
   if (!file) {
-    console.error(`${c.red}error:${c.reset} perintah \`fmt\` butuh argumen <file>`);
+    printErrorBox(
+      "Argumen kurang",
+      "Perintah `fmt` butuh path ke file.",
+      [`Penggunaan: ${BIN_NAME} fmt <file.snake>`],
+    );
+    console.log("");
     process.exit(EXIT_USAGE);
   }
 
-  console.error(
-    `${c.yellow}warning:${c.reset} formatter belum diimplementasikan (rencana v0.5.0)`,
+  console.log("");
+  printBox(
+    [`${C.yellow}⚠${C.reset}  Formatter belum diimplementasikan.`, "", `  ${C.dim}Rencana: v0.5.0${C.reset}`],
+    { title: "Warning", titleColor: `${C.bold}${C.yellow}`, borderColor: C.yellow },
   );
+  console.log("");
   process.exit(EXIT_OK);
 }
 
@@ -387,14 +719,24 @@ function cmdInit(args: string[]): void {
   const name = args.find((a) => !a.startsWith("-"));
 
   if (!name) {
-    console.error(`${c.red}error:${c.reset} perintah \`init\` butuh argumen <nama>`);
+    printErrorBox(
+      "Argumen kurang",
+      "Perintah `init` butuh nama proyek.",
+      [`Penggunaan: ${BIN_NAME} init <nama>`],
+    );
+    console.log("");
     process.exit(EXIT_USAGE);
   }
 
   const target = path.resolve(name);
 
   if (fs.existsSync(target)) {
-    console.error(`${c.red}error:${c.reset} direktori sudah ada: ${name}`);
+    printErrorBox(
+      "Direktori sudah ada",
+      name,
+      [`Path: ${target}`],
+    );
+    console.log("");
     process.exit(EXIT_USAGE);
   }
 
@@ -404,8 +746,8 @@ function cmdInit(args: string[]): void {
   fs.writeFileSync(
     path.join(target, "src", "main.snake"),
     [
-      "fn main():",
-      '    tulis("Halo dari ${main}!")',
+      'fn main():',
+      '    tulis("Halo dari Snake Script!")',
       "",
       "main()",
       "",
@@ -422,7 +764,7 @@ function cmdInit(args: string[]): void {
       "## Menjalankan",
       "",
       "```bash",
-      `snake run src/main.snake`,
+      "snake run src/main.snake",
       "```",
       "",
     ].join("\n"),
@@ -433,8 +775,16 @@ function cmdInit(args: string[]): void {
     ["dist/", "node_modules/", "*.snakec", ".snake-cache/", ""].join("\n"),
   );
 
-  console.error(`${c.green}ok${c.reset} proyek dibuat di ${c.bold}${name}${c.reset}`);
-  console.error(`${c.dim}  cd ${name} && snake run src/main.snake${c.reset}`);
+  console.log("");
+  printSuccessBox(
+    "Proyek dibuat",
+    `${C.bold}${name}${C.reset}`,
+  );
+  console.log("");
+  console.log(`  ${C.dim}Langkah selanjutnya:${C.reset}`);
+  console.log(`    ${C.cyan}cd ${name}${C.reset}`);
+  console.log(`    ${C.cyan}snake run src/main.snake${C.reset}`);
+  console.log("");
   process.exit(EXIT_OK);
 }
 
@@ -443,43 +793,51 @@ function cmdInit(args: string[]): void {
 // ============================================================
 
 function cmdInfo(): void {
-  console.log(`${c.bold}${BIN_NAME} ${VERSION}${c.reset}`);
-  console.log(TAGLINE);
+  const w = termWidth();
+  const inner = w - 2;
+
+  // Header box
   console.log("");
-  console.log(`node:       ${process.version}`);
-  console.log(`platform:   ${process.platform} ${process.arch}`);
-  console.log(`cwd:        ${process.cwd()}`);
-  console.log(`color:      ${useColor ? "aktif" : "nonaktif"}`);
-  console.log(`tty:        ${process.stdout.isTTY ? "ya" : "tidak"}`);
+  console.log(`${C.cyan}${B.tl}${hline(inner)}${B.tr}${C.reset}`);
+
+  const title = `${C.brightGreen}🐍${C.reset}  ${C.bold}${C.brightCyan}Snake Script${C.reset}`;
+  const titleVisible = "🐍  Snake Script";
+  const tPad = " ".repeat(Math.max(0, inner - titleVisible.length - 2));
+  console.log(`${C.cyan}${B.v}${C.reset} ${title}${tPad} ${C.cyan}${B.v}${C.reset}`);
+
+  const sub = `    ${C.dim}v${VERSION}${C.reset}`;
+  const subVisible = `    v${VERSION}`;
+  const sPad = " ".repeat(Math.max(0, inner - subVisible.length - 2));
+  console.log(`${C.cyan}${B.v}${C.reset} ${sub}${sPad} ${C.cyan}${B.v}${C.reset}`);
+
+  console.log(`${C.cyan}${B.lt}${hline(inner)}${B.rt}${C.reset}`);
+
+  // Info rows
+  const rows: Array<[string, string]> = [
+    ["Versi", VERSION],
+    ["Node", process.version],
+    ["Platform", `${process.platform} ${process.arch}`],
+    ["CWD", process.cwd().replace(process.env.HOME ?? "", "~")],
+    ["Warna", useColor ? `${C.green}aktif${C.reset}` : `${C.dim}nonaktif${C.reset}`],
+    ["TTY", process.stdout.isTTY ? "ya" : "tidak"],
+  ];
+
+  for (const [key, value] of rows) {
+    const keyCol = `${C.bold}${C.blue}${key.padEnd(10)}${C.reset}`;
+    const valueCol = value;
+    const line = `  ${keyCol} ${valueCol}`;
+    const visible = stripAnsi(line).length;
+    const padding = " ".repeat(Math.max(0, inner - visible - 2));
+    console.log(`${C.cyan}${B.v}${C.reset} ${line}${padding} ${C.cyan}${B.v}${C.reset}`);
+  }
+
+  console.log(`${C.cyan}${B.bl}${hline(inner)}${B.br}${C.reset}`);
+
+  // Footer link
+  console.log("");
+  console.log(`  ${C.dim}${HOMEPAGE}${C.reset}`);
+  console.log("");
   process.exit(EXIT_OK);
-}
-
-// ============================================================
-// Help
-// ============================================================
-
-function printHelp(): void {
-  console.log(`${c.bold}${BIN_NAME} ${VERSION}${c.reset}`);
-  console.log(TAGLINE);
-  console.log("");
-  console.log(`${c.bold}PENGGUNAAN:${c.reset}`);
-  console.log(`    ${BIN_NAME} <PERINTAH> [OPSI]`);
-  console.log("");
-  console.log(`${c.bold}PERINTAH:${c.reset}`);
-  console.log(`    run <file>       Jalankan program Snake Script`);
-  console.log(`    check <file>     Periksa sintaks tanpa menjalankan`);
-  console.log(`    repl             Mode interaktif`);
-  console.log(`    fmt <file>       Rapikan format kode`);
-  console.log(`    init <nama>      Buat proyek baru`);
-  console.log(`    info             Tampilkan info versi dan lingkungan`);
-  console.log("");
-  console.log(`${c.bold}OPSI:${c.reset}`);
-  console.log(`    -h, --help       Tampilkan bantuan`);
-  console.log(`    -v, --version    Tampilkan versi`);
-  console.log(`    --no-color       Matikan warna`);
-  console.log(`    -q, --quiet      Mode senyap`);
-  console.log("");
-  console.log(`${c.dim}Jalankan '${BIN_NAME} <PERINTAH> --help' untuk info lebih lanjut.${c.reset}`);
 }
 
 // ============================================================
@@ -487,13 +845,13 @@ function printHelp(): void {
 // ============================================================
 
 process.on("uncaughtException", (e) => {
-  console.error(`${c.red}internal error:${c.reset} ${e.message}`);
+  console.error(`${C.red}${C.bold}internal error:${C.reset} ${e.message}`);
   if (process.env.SNAKE_DEBUG) console.error(e.stack);
   process.exit(EXIT_RUNTIME_ERROR);
 });
 
 process.on("SIGINT", () => {
-  console.error("");
+  console.log("");
   process.exit(130);
 });
 
