@@ -109,6 +109,23 @@ export interface Token {
 }
 
 // ============================================================
+// Interpolation Frame
+// ============================================================
+//
+// Setiap kali kita masuk ke `${...}` di dalam string, kita push
+// frame ke stack. Frame menyimpan:
+// - quote: karakter kutip asli string pembungkus (`"` atau `'`)
+// - braceDepth: jumlah `{` bersarang di dalam `${...}` yang belum
+//   ditutup. Ini penting untuk membedakan `{a: 1}` (map literal)
+//   dari `}` yang menutup interpolation.
+//
+
+interface InterpFrame {
+  quote: string;
+  braceDepth: number;
+}
+
+// ============================================================
 // TokenStream
 // ============================================================
 
@@ -361,7 +378,7 @@ export class Lexer {
   private readonly tokens: Token[] = [];
   private readonly indentStack: number[] = [0];
   private bracketDepth = 0;
-  private readonly interpStack: number[] = [];
+  private readonly interpStack: InterpFrame[] = [];
   private atLineStart = true;
   private recovering = false;
 
@@ -694,20 +711,18 @@ export class Lexer {
     this.advance();
 
     let buffer = "";
-    let hasInterp = false;
 
     while (!this.isAtEnd()) {
       const c = this.peek();
 
+      // Penutup string
       if (c === quote) {
         this.advance();
         const start = this.sourceMap.position(startOffset);
         const end = this.sourceMap.position(this.pos);
         const raw = this.source.slice(startOffset, this.pos);
 
-        if (hasInterp && this.interpStack.length > 0) {
-          this.emitToken("STRING_INTERP_END", buffer, start, end, raw);
-        } else if (isRaw) {
+        if (isRaw) {
           this.emitToken("RAW_STRING", buffer, start, end, raw);
         } else {
           this.emitToken("STRING", buffer, start, end, raw);
@@ -715,6 +730,7 @@ export class Lexer {
         return;
       }
 
+      // Mulai interpolasi `${`
       if (!isRaw && c === "$" && this.peekAt(1) === "{") {
         this.advance();
         this.advance();
@@ -722,20 +738,15 @@ export class Lexer {
         const end = this.sourceMap.position(this.pos);
         const raw = this.source.slice(startOffset, this.pos);
 
-        const kind: TokenKind =
-          this.interpStack.length > 0
-            ? "STRING_INTERP_MIDDLE"
-            : "STRING_INTERP_START";
-        this.emitToken(kind, buffer, start, end, raw);
-        this.interpStack.push(0);
-        hasInterp = true;
+        this.emitToken("STRING_INTERP_START", buffer, start, end, raw);
+        this.interpStack.push({ quote, braceDepth: 0 });
         return;
       }
 
+      // Escape
       if (!isRaw && c === "\\") {
         this.advance();
-        const esc = this.peek();
-        const decoded = this.decodeEscape(esc, startOffset);
+        const decoded = this.decodeEscape(this.peek(), startOffset);
         if (decoded === null) {
           this.recovering = this.recoverOnError;
           return;
@@ -744,6 +755,7 @@ export class Lexer {
         continue;
       }
 
+      // Newline di string biasa = error
       if (!isRaw && (c === "\n" || c === "\r")) {
         const start = this.sourceMap.position(startOffset);
         const end = this.sourceMap.position(this.pos);
@@ -860,14 +872,19 @@ export class Lexer {
     }
   }
 
-  private readStringContinuation(): void {
+  /**
+   * Lanjutkan membaca string setelah `}` menutup interpolation.
+   * Parameter `quote` adalah karakter kutip asli string pembungkus.
+   */
+  private readStringContinuation(quote: string): void {
     const startOffset = this.pos;
     let buffer = "";
 
     while (!this.isAtEnd()) {
       const c = this.peek();
 
-      if (c === '"' || c === "'") {
+      // Penutup string — hanya karakter kutip ASLI yang dianggap penutup
+      if (c === quote) {
         this.advance();
         const start = this.sourceMap.position(startOffset);
         const end = this.sourceMap.position(this.pos);
@@ -876,16 +893,18 @@ export class Lexer {
         return;
       }
 
+      // Interpolasi lanjutan
       if (c === "$" && this.peekAt(1) === "{") {
         this.advance(); this.advance();
         const start = this.sourceMap.position(startOffset);
         const end = this.sourceMap.position(this.pos);
         const raw = this.source.slice(startOffset, this.pos);
         this.emitToken("STRING_INTERP_MIDDLE", buffer, start, end, raw);
-        this.interpStack.push(0);
+        this.interpStack.push({ quote, braceDepth: 0 });
         return;
       }
 
+      // Escape
       if (c === "\\") {
         this.advance();
         const decoded = this.decodeEscape(this.peek(), startOffset);
@@ -928,16 +947,29 @@ export class Lexer {
       case ")": if (this.bracketDepth > 0) this.bracketDepth--; kind = "RPAREN"; break;
       case "[": this.bracketDepth++; kind = "LBRACKET"; break;
       case "]": if (this.bracketDepth > 0) this.bracketDepth--; kind = "RBRACKET"; break;
-      case "{": this.bracketDepth++; kind = "LBRACE"; break;
+      case "{": {
+        this.bracketDepth++;
+        if (this.interpStack.length > 0) {
+          const top = this.interpStack[this.interpStack.length - 1]!;
+          top.braceDepth++;
+        }
+        kind = "LBRACE";
+        break;
+      }
       case "}": {
         if (this.interpStack.length > 0) {
           const top = this.interpStack[this.interpStack.length - 1]!;
-          if (top === 0) {
-            this.interpStack.pop();
-            this.readStringContinuation();
-            return;
+          if (top.braceDepth > 0) {
+            // Ini `}` menutup map literal di dalam interpolation
+            top.braceDepth--;
+            if (this.bracketDepth > 0) this.bracketDepth--;
+            kind = "RBRACE";
+            break;
           }
-          this.interpStack[this.interpStack.length - 1] = top - 1;
+          // Ini `}` yang menutup interpolation
+          this.interpStack.pop();
+          this.readStringContinuation(top.quote);
+          return;
         }
         if (this.bracketDepth > 0) this.bracketDepth--;
         kind = "RBRACE";
@@ -1042,6 +1074,17 @@ export class Lexer {
   private emitFinal(): void {
     const pos = this.sourceMap.position(this.pos);
 
+    // Kalau masih ada interpolation yang belum ditutup
+    if (this.interpStack.length > 0) {
+      this.reporter.report({
+        severity: "error",
+        code: ErrorCode.UNTERMINATED_STRING,
+        message: "interpolasi tidak ditutup dengan `}`",
+        location: { start: pos, end: pos, file: this.file },
+      });
+      this.interpStack.length = 0;
+    }
+
     while (this.indentStack.length > 1) {
       this.indentStack.pop();
       this.emitSynthetic("DEDENT", pos);
@@ -1124,7 +1167,7 @@ export class Lexer {
     if (this.peek() === "\r" && this.peekAt(1) === "\n") {
       this.pos += 2;
     } else if (this.peek() === "\n" || this.peek() === "\r") {
-      this.pos++;
+      this.pos += 1;
     }
   }
 

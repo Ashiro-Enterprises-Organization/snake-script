@@ -1,0 +1,9 @@
+fn kuadrat(x: Angka) -> Angka:
+    return x * x
+
+for i in 1..6:
+    tulis("${i}² = ${kuadrat(i)}")
+
+const kata = ["halo", "dunia", "snake"]
+for k in kata:
+    tulis("Panjang '${k}' = ${panjang(k)}")
