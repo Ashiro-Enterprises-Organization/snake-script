@@ -1,4 +1,4 @@
-```typescript
+
 /**
  * Snake Script — Advanced Interpreter & Runtime Engine
  *
@@ -2637,4 +2637,3 @@ export function run(
   const interpreter = new Interpreter({ file, reporter, onPrint, ...options });
   return interpreter.run(program);
 }
-```
