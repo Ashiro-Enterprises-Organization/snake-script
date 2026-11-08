@@ -1,4 +1,4 @@
-```typescript
+
 /**
  * Snake Script — Advanced Diagnostics & Reporting Engine
  *
@@ -1184,4 +1184,3 @@ export class InternalError extends Error {
     this.context = context;
   }
 }
-```
