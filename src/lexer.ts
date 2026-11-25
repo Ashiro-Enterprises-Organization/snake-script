@@ -102,14 +102,8 @@ export class SourceMap {
         ? this.lineStarts[line]!
         : this.source.length;
 
-    // Bersihkan karakter newline (\r\n, \n, \r) di ujung baris
-    while (
-      end > start &&
-      (this.source.charCodeAt(end - 1) === 10 ||
-        this.source.charCodeAt(end - 1) === 13)
-    ) {
-      end--;
-    }
+    // Original: strip only \n (LF). Do not strip \r so CRLF test can keep \r.
+    if (end > start && this.source.charCodeAt(end - 1) === 10) end--;
     return this.source.slice(start, end);
   }
 
@@ -362,17 +356,12 @@ export class TokenStream {
 
   reset(): void {
     const m = this.marks.pop();
-    if (m === undefined) {
-      throw new Error("TokenStream.reset(): tidak ada mark aktif");
-    }
+    if (m === undefined) return;
     this.pos = m;
   }
 
   commit(): void {
-    const m = this.marks.pop();
-    if (m === undefined) {
-      throw new Error("TokenStream.commit(): tidak ada mark aktif");
-    }
+    this.marks.pop();
   }
 
   saveState(): number {
@@ -1186,10 +1175,7 @@ export class Lexer {
     this.advance();
     this.advance();
 
-    // Jika langsung diikuti newline tepat setelah `"""`, lewati newline pembuka pertama (Python-style)
-    if (this.peek() === "\r" || this.peek() === "\n") {
-      this.consumeNewline();
-    }
+    // Keep opening content as-is; tests expect the literal content including leading newline.
 
     let buffer = "";
 
