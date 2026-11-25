@@ -174,18 +174,29 @@ export class Environment {
     return false;
   }
 
-  assign(name: string, value: Value): "ok" | "not_found" | "immutable" {
+  assign(name: string, value: Value): boolean {
     const entry = this.bindings.get(name);
     if (entry !== undefined) {
       if (!entry.mutable) {
-        return "immutable";
+        return false;
       }
       entry.value = value;
-      return "ok";
+      return true;
     }
     if (this.parent) {
       return this.parent.assign(name, value);
     }
+    return false;
+  }
+
+  assignDetailed(name: string, value: Value): "ok" | "not_found" | "immutable" {
+    const entry = this.bindings.get(name);
+    if (entry !== undefined) {
+      if (!entry.mutable) return "immutable";
+      entry.value = value;
+      return "ok";
+    }
+    if (this.parent) return this.parent.assignDetailed(name, value);
     return "not_found";
   }
 
@@ -1034,7 +1045,7 @@ export class Interpreter {
 
   private writeTarget(target: ExprNode, value: Value, env: Environment): void {
     if (target.kind === "Identifier") {
-      const status = env.assign(target.name, value);
+      const status = env.assignDetailed(target.name, value);
       if (status === "not_found") {
         throw this.createRuntimeError(
           `variabel tidak terdefinisi: \`${target.name}\``,
@@ -1614,7 +1625,7 @@ export class Interpreter {
         );
       }
 
-      if (this.callStack.length >= this.maxCallDepth) {
+      if (this.callStack.length > this.maxCallDepth) {
         throw this.createRuntimeError(
           `kedalaman pemanggilan fungsi melampaui batas maksimum (${this.maxCallDepth}) — kemungkinan rekursi tanpa henti pada \`${callee.name}\``,
           ErrorCode.INTERNAL_ERROR,

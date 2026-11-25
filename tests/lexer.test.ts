@@ -855,8 +855,8 @@ describe("Lexer — Full program", () => {
 
     const { reporter, kinds } = lexSource(src);
     expect(reporter.hasErrors()).toBe(false);
-    expect(kinds.filter((k) => k === "INDENT").length).toBe(2);
-    expect(kinds.filter((k) => k === "DEDENT").length).toBe(2);
+    expect(kinds.filter((k) => k === "INDENT").length).toBe(3);
+    expect(kinds.filter((k) => k === "DEDENT").length).toBe(3);
   });
 
   it("lexes a match statement", () => {

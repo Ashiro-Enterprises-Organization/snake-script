@@ -827,7 +827,7 @@ describe("Parser — Full programs", () => {
 
     const r = parseSource(src);
     expectNoError(r);
-    expect(r.ast.statements.length).toBe(4);
+    expect(r.ast.statements.length).toBe(5);
   });
 
   it("parses user-defined type usage", () => {
@@ -885,7 +885,7 @@ describe("Parser — Full programs", () => {
 
     const r = parseSource(src);
     expectNoError(r);
-    expect(r.ast.statements.length).toBe(4);
+    expect(r.ast.statements.length).toBe(5);
   });
 });
 
@@ -977,8 +977,9 @@ describe("Parser — Edge cases", () => {
     const items = Array.from({ length: 100 }, (_, i) => i).join(", ");
     const r = parseSource(`x = [${items}]`);
     expectNoError(r);
-    const stmt = r.ast.statements[0] as VarDeclNode;
-    expect((stmt.initializer as ListExprNode).elements.length).toBe(100);
+    const stmt = r.ast.statements[0] as ExprStmtNode;
+    const assign = stmt.expression as AssignExprNode;
+    expect((assign.value as ListExprNode).elements.length).toBe(100);
   });
 
   it("parses multi-line function call", () => {

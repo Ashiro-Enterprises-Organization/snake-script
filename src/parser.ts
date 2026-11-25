@@ -596,7 +596,7 @@ export class Parser {
       initializer = this.parseExpression();
     }
 
-    if (!mutable && !initializer) {
+    if (!mutable && !initializer && !typeAnnotation) {
       this.error(
         ErrorCode.UNEXPECTED_TOKEN,
         `deklarasi \`const ${name}\` wajib memiliki nilai awal (\`= ...\`)`,
@@ -2022,7 +2022,22 @@ export class Parser {
     }
 
     this.expect("FAT_ARROW");
+
+    let indentedBody = false;
+    if (this.check("NEWLINE")) {
+      this.next();
+      if (this.check("INDENT")) {
+        this.next();
+        indentedBody = true;
+      }
+    }
+
     const body = this.withContext("function", () => this.parseExpression());
+
+    if (indentedBody) {
+      if (this.check("NEWLINE")) this.next();
+      if (this.check("DEDENT")) this.next();
+    }
 
     return {
       kind: "FunctionExpr",
